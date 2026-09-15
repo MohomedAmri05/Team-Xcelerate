@@ -1,0 +1,1 @@
+import {app} from './app.js';import {sequelize} from './models/index.js';const port=process.env.PORT||5000;sequelize.authenticate().then(()=>app.listen(port,()=>console.log(`High Street API listening on ${port}`))).catch(e=>{console.error('Database connection failed:',e.message);process.exit(1)});

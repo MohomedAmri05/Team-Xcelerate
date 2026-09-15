@@ -1,0 +1,1 @@
+import {Link} from 'react-router-dom';export default function Brand(){return <Link className="brand" to="/" aria-label="High Street home"><span>HS</span><strong>HIGH STREET<small>MOTOR COMPANY · KANDY</small></strong></Link>}

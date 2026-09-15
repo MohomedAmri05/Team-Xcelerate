@@ -1,0 +1,1 @@
+import {describe,it,expect} from 'vitest';import {calculateLoan} from '../src/utils/finance.js';describe('finance calculator',()=>{it('calculates amortized payment',()=>expect(calculateLoan(1000000,200000,12,12).monthlyPayment).toBeCloseTo(71079.03,2));it('handles zero interest',()=>expect(calculateLoan(120000,20000,12,0).monthlyPayment).toBeCloseTo(8333.33,2))});
