@@ -360,3 +360,25 @@ The verified automated result is:
 - API health check: passed.
 - Role and permission acceptance testing: passed.
 - Primary CRUD workflow testing: passed.
+
+## Vehicle Inventory Management — Manual Verification
+
+**Tester:** M.R.M. Amri  
+**Student ID:** SA25610225  
+**Date:** 15 September 2026  
+**Branch:** `feature/amri-vehicle-inventory`
+
+The Vehicle Inventory Management module was manually verified successfully.
+
+- Public inventory loads correctly.
+- Vehicle search and filters work correctly.
+- Vehicle details and image galleries render correctly.
+- Authorized users can create and update vehicles.
+- Vehicle status changes work correctly.
+- Vehicle images can be uploaded and managed.
+- Invalid vehicle data is rejected by validation.
+- Draft and archived vehicles are handled correctly.
+- Vehicle and image records are stored in the database.
+- Inventory pages work on desktop and mobile layouts.
+
+**Result:** Passed
