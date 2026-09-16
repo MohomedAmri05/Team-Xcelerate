@@ -153,7 +153,7 @@ export default function Wishlist() {
       )}
 
       {vehicles.length > 0 && (
-        <div className="vehicle-grid">
+        <div className="grid">
           {vehicles.map((vehicle) => (
             <VehicleCard
               key={vehicle.vehicleId}
