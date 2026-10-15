@@ -1,3 +1,9 @@
+/*
+| VIVA-UI – M.R.M. Amri – Test-Drive Bookings (CRUD 4)
+|   CREATE request a test drive → POST /bookings
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   CalendarDays,
   Car,

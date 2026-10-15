@@ -1,3 +1,10 @@
+/*
+| VIVA-UI – M.R.M. Amri – Test-Drive Bookings (CRUD 4), customer side
+|   READ → GET /my/bookings
+|   UPDATE reschedule → PATCH /my/bookings/:id; cancel → PATCH /my/bookings/:id/cancel
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   CalendarDays,
   Car,
@@ -16,8 +23,128 @@ import {
 } from '../hooks/useApi';
 
 import {
-  api
+  api,
+  errorMessage
 } from '../services/api';
+
+import {
+  useState
+} from 'react';
+
+import StatusBadge
+  from '../components/ui/StatusBadge';
+
+import ProgressSteps
+  from '../components/ui/ProgressSteps';
+
+import {
+  useConfirm
+} from '../components/ui/ConfirmDialog';
+
+import DocumentList
+  from '../components/documents/DocumentList';
+
+import DocumentUploader
+  from '../components/documents/DocumentUploader';
+
+function todayLocal() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function RescheduleForm({ booking, onDone, onCancel }) {
+  const [form, setForm] = useState({
+    preferredDate: booking.preferredDate,
+    preferredTime: String(booking.preferredTime || '').slice(0, 5),
+    customerNote: booking.customerNote || ''
+  });
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+
+    try {
+      await api.patch(`/my/bookings/${booking.bookingId}`, form);
+      toast.success('Your requested slot was updated');
+      onDone();
+    } catch (error) {
+      toast.error(errorMessage(error, 'Could not update the booking'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form className="booking-reschedule" onSubmit={submit}>
+      <label>
+        Preferred date
+        <input
+          type="date"
+          required
+          min={todayLocal()}
+          value={form.preferredDate}
+          onChange={(event) => setForm({ ...form, preferredDate: event.target.value })}
+        />
+      </label>
+      <label>
+        Preferred time
+        <input
+          type="time"
+          required
+          value={form.preferredTime}
+          onChange={(event) => setForm({ ...form, preferredTime: event.target.value })}
+        />
+      </label>
+      <label className="booking-reschedule__note">
+        Note (optional)
+        <textarea
+          maxLength={2000}
+          value={form.customerNote}
+          onChange={(event) => setForm({ ...form, customerNote: event.target.value })}
+        />
+      </label>
+      <div className="actions">
+        <button className="button" type="submit" disabled={saving}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+        <button className="button ghost" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function BookingDocuments({ booking }) {
+  const { data, reload, loading } = useApi('/documents', {
+    bookingId: booking.bookingId
+  });
+
+  return (
+    <div className="booking-documents">
+      <p className="booking-documents__hint">
+        You can share a copy of your driving licence or other documents for this test drive. Only you and High Street
+        staff can open them.
+      </p>
+      {loading ? (
+        <p className="muted">Loading documents…</p>
+      ) : (
+        <DocumentList documents={data || []} onChanged={reload} emptyText="No documents shared for this booking." />
+      )}
+      {booking.status !== 'Cancelled' && booking.status !== 'Completed' && (
+        <DocumentUploader
+          bookingId={booking.bookingId}
+          categories={['Identity Document', 'Booking Document']}
+          compact
+          onUploaded={reload}
+        />
+      )}
+    </div>
+  );
+}
 
 function formatDate(value) {
   if (!value) {
@@ -74,12 +201,28 @@ export default function MyBookings() {
       ? data
       : [];
 
+  const confirm = useConfirm();
+
+  const [
+    editingId,
+    setEditingId
+  ] = useState(null);
+
+  const [
+    documentsId,
+    setDocumentsId
+  ] = useState(null);
+
   const cancelBooking = async (
     booking
   ) => {
-    const confirmed = window.confirm(
-      `Cancel your test-drive request for ${booking.vehicleReference}?`
-    );
+    const confirmed = await confirm({
+      title: 'Cancel this test drive?',
+      message: `Your request for the ${booking.vehicleReference} on ${formatDate(booking.preferredDate)} will be cancelled.`,
+      confirmLabel: 'Cancel booking',
+      cancelLabel: 'Keep booking',
+      tone: 'danger'
+    });
 
     if (!confirmed) {
       return;
@@ -211,16 +354,17 @@ export default function MyBookings() {
                   </h2>
                 </div>
 
-                <span
-                  className={
-                    `booking-status ${booking.status
-                      .toLowerCase()
-                      .replace(' ', '-')}`
-                  }
-                >
-                  {booking.status}
-                </span>
+                <StatusBadge
+                  kind="booking"
+                  status={booking.status}
+                />
               </div>
+
+              <ProgressSteps
+                kind="booking"
+                status={booking.status}
+                stoppedAt={booking.confirmedAt ? 'Confirmed' : 'Pending'}
+              />
 
               <div className="booking-schedule">
                 <span>
@@ -277,6 +421,44 @@ export default function MyBookings() {
                   </Link>
                 )}
 
+                {booking.status === 'Pending' && (
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={() => {
+                      setEditingId(
+                        editingId === booking.bookingId
+                          ? null
+                          : booking.bookingId
+                      );
+                    }}
+                  >
+                    Change date or time
+                  </button>
+                )}
+
+                <button
+                  className="button ghost"
+                  type="button"
+                  aria-expanded={documentsId === booking.bookingId}
+                  onClick={() => {
+                    setDocumentsId(
+                      documentsId === booking.bookingId
+                        ? null
+                        : booking.bookingId
+                    );
+                  }}
+                >
+                  Documents
+                </button>
+
+                <Link
+                  className="button ghost"
+                  to={`/my-complaints?new=1&category=Test%20Drive&bookingId=${booking.bookingId}`}
+                >
+                  Report a problem
+                </Link>
+
                 {canCancel && (
                   <button
                     className="button booking-cancel"
@@ -289,6 +471,21 @@ export default function MyBookings() {
                   </button>
                 )}
               </div>
+
+              {editingId === booking.bookingId && (
+                <RescheduleForm
+                  booking={booking}
+                  onCancel={() => setEditingId(null)}
+                  onDone={() => {
+                    setEditingId(null);
+                    reload?.();
+                  }}
+                />
+              )}
+
+              {documentsId === booking.bookingId && (
+                <BookingDocuments booking={booking} />
+              )}
 
               {!booking.vehicle && (
                 <p className="booking-history-note">

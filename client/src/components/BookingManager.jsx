@@ -1,3 +1,17 @@
+/*
+| VIVA-UI – M.R.M. Amri – Test-Drive Bookings (CRUD 4), dashboard
+|   READ → GET /bookings
+|   UPDATE confirm / complete / cancel / assign → PATCH /bookings/:id(/assign)
+|   DELETE (Admin) → DELETE /bookings/:id
+| Assigned staff drop-down (Admin, October 2026): every active Staff member
+| is listed with "Available" or "Not available – <reason>" for THAT booking
+| (GET /bookings/staff-availability). Unavailable Staff cannot be chosen:
+| on leave that day, another test drive within an hour, or no "Manage
+| bookings" permission. The server checks the same rule again (422).
+| Leave days are managed in the Staff availability panel above the list.
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   CalendarDays,
   Clock,
@@ -9,6 +23,7 @@ import {
   useState
 } from 'react';
 
+import { confirmDialog } from './ui/ConfirmDialog';
 import toast from 'react-hot-toast';
 
 import {
@@ -18,6 +33,8 @@ import {
 import {
   useAuth
 } from '../features/auth/AuthContext';
+
+import StaffAvailabilityPanel from './admin/StaffAvailabilityPanel';
 
 const statuses = [
   'Pending',
@@ -50,10 +67,11 @@ export default function BookingManager() {
     setBookings
   ] = useState([]);
 
+  // Admin: { staff: [...], bookings: { bookingId: { userId: {available, reason} } } }
   const [
-    staff,
-    setStaff
-  ] = useState([]);
+    availability,
+    setAvailability
+  ] = useState({ staff: [], bookings: {} });
 
   const [
     loading,
@@ -97,30 +115,28 @@ export default function BookingManager() {
     }
   };
 
-  const loadStaff = async () => {
+  // Who is free for each booking on screen (one request for the whole list).
+  const loadAvailability = async (list = bookings) => {
     if (!isAdmin) {
       return;
     }
 
     try {
-      const response =
-        await api.get('/users');
+      const response = await api.get(
+        '/bookings/staff-availability',
+        {
+          params: {
+            ids: list.map((booking) => booking.bookingId).join(',')
+          }
+        }
+      );
 
-      const users =
-        Array.isArray(response.data.data)
-          ? response.data.data
-          : response.data.data?.rows || [];
-
-      setStaff(
-        users.filter(
-          (account) =>
-            account.role === 'Staff' &&
-            account.isActive
-        )
+      setAvailability(
+        response.data.data || { staff: [], bookings: {} }
       );
     } catch {
       toast.error(
-        'Could not load staff accounts'
+        'Could not load staff availability'
       );
     }
   };
@@ -130,8 +146,8 @@ export default function BookingManager() {
   }, [statusFilter]);
 
   useEffect(() => {
-    loadStaff();
-  }, [isAdmin]);
+    loadAvailability(bookings);
+  }, [isAdmin, bookings]);
 
   const updateBooking = async (
     booking,
@@ -195,7 +211,7 @@ export default function BookingManager() {
   const deleteBooking = async (
     booking
   ) => {
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       `Permanently delete booking #${booking.bookingId}?`
     );
 
@@ -274,12 +290,19 @@ export default function BookingManager() {
           </div>
         )}
 
+      {isAdmin && (
+        <StaffAvailabilityPanel
+          onChanged={() => loadAvailability(bookings)}
+        />
+      )}
+
       <div className="dashboard-booking-list">
         {bookings.map((booking) => (
           <BookingRecord
             key={booking.bookingId}
             booking={booking}
-            staff={staff}
+            staff={availability.staff}
+            availability={availability.bookings[booking.bookingId] || {}}
             isAdmin={isAdmin}
             onUpdate={updateBooking}
             onAssign={assignBooking}
@@ -294,6 +317,7 @@ export default function BookingManager() {
 function BookingRecord({
   booking,
   staff,
+  availability,
   isAdmin,
   onUpdate,
   onAssign,
@@ -378,10 +402,11 @@ function BookingRecord({
       )}
 
       {isAdmin && (
-        <label>
+        <label className="assign-staff">
           Assigned staff
 
           <select
+            aria-label={`Assigned staff for booking ${booking.bookingId}`}
             value={
               booking.assignedTo || ''
             }
@@ -396,15 +421,42 @@ function BookingRecord({
               Unassigned
             </option>
 
-            {staff.map((account) => (
-              <option
-                value={account.userId}
-                key={account.userId}
-              >
-                {account.name}
-              </option>
-            ))}
+            {staff.map((account) => {
+              const check = availability[account.userId];
+              const isCurrent = account.userId === booking.assignedTo;
+              const free = check?.available !== false;
+
+              return (
+                <option
+                  value={account.userId}
+                  key={account.userId}
+                  disabled={!free && !isCurrent}
+                >
+                  {account.name} — {free ? 'Available' : `Not available: ${check.reason}`}
+                </option>
+              );
+            })}
+
+            {booking.assignedTo &&
+              !staff.some((account) => account.userId === booking.assignedTo) && (
+                <option value={booking.assignedTo} disabled>
+                  {booking.assignedStaff?.name || `Staff #${booking.assignedTo}`} — inactive
+                </option>
+              )}
           </select>
+
+          {booking.assignedTo &&
+            availability[booking.assignedTo]?.available === false && (
+              <small className="assign-warning" role="status">
+                {booking.assignedStaff?.name || 'The assigned Staff member'} is no longer available:{' '}
+                {availability[booking.assignedTo].reason}. Choose someone else.
+              </small>
+            )}
+
+          <small className="assign-hint">
+            {staff.filter((account) => availability[account.userId]?.available !== false).length} of {staff.length} Staff available on{' '}
+            {formatDate(booking.preferredDate)} at {String(booking.preferredTime || '').slice(0, 5)}
+          </small>
         </label>
       )}
 

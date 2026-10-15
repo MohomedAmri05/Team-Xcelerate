@@ -1,3 +1,17 @@
+/*
+|--------------------------------------------------------------------------
+| VIVA-HEADER – H.F. Naaziq – Customer Enquiry
+| CRUD resource 2: Enquiry Responses (table `enquiry_responses`)
+|--------------------------------------------------------------------------
+|   CREATE  createResponse       POST /api/v1/enquiries/:enquiryId/responses
+|   READ    listResponses        GET /api/v1/enquiries/:enquiryId/responses
+|   UPDATE  updateResponse       PUT /api/v1/enquiry-responses/:id
+|   UPDATE  sendResponse         POST /api/v1/enquiry-responses/:id/send
+|   DELETE  deleteResponse       DELETE /api/v1/enquiry-responses/:id
+| Every write goes through Sequelize to MySQL/MariaDB and is recorded in
+| activity_logs (services/activity.service.js) where it changes data.
+*/
+
 import {
   Enquiry,
   Response,
@@ -9,8 +23,14 @@ import {
 } from '../middleware/core.js';
 
 import {
-  sendMail
+  enquiryTag,
+  sendMail,
+  withTag
 } from '../services/mail.service.js';
+
+import {
+  logActivity
+} from '../services/activity.service.js';
 
 /*
 |--------------------------------------------------------------------------
@@ -103,6 +123,7 @@ const findAccessibleResponse =
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD READ – drafts and sent replies (GET /api/v1/enquiries/:enquiryId/responses)
 export async function listResponses(
   req,
   res
@@ -142,6 +163,7 @@ export async function listResponses(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD CREATE – new draft reply (POST /api/v1/enquiries/:enquiryId/responses)
 export async function createResponse(
   req,
   res
@@ -211,6 +233,7 @@ export async function createResponse(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD UPDATE – edit a draft (PUT /api/v1/enquiry-responses/:id)
 export async function updateResponse(
   req,
   res
@@ -260,6 +283,7 @@ export async function updateResponse(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD UPDATE – email it; becomes Sent only if SMTP accepts (POST /api/v1/enquiry-responses/:id/send)
 export async function sendResponse(
   req,
   res
@@ -292,16 +316,29 @@ export async function sendResponse(
    * database status is changed.
    */
   const mailResult =
-    await sendMail({
-      to:
-        enquiry.customerEmail,
-
-      subject:
-        response.subject,
-
-      text:
-        response.responseBody
-    });
+    await sendMail(
+      {
+        to:
+          enquiry.customerEmail,
+        subject: withTag(
+          response.subject,
+          enquiryTag(enquiry.enquiryId)
+        ),
+        heading:
+          response.subject,
+        text:
+          response.responseBody
+      },
+      {
+        // One response is delivered once, even if Send is clicked twice.
+        messageKey:
+          `enquiry-response-${response.responseId}`,
+        template: 'enquiry-response',
+        relatedType: 'Enquiry',
+        relatedId: enquiry.enquiryId,
+        createdBy: req.user.userId
+      }
+    );
 
   /*
    * A preview means the message was not
@@ -311,11 +348,15 @@ export async function sendResponse(
   if (!mailResult.delivered) {
     return res.status(503).json({
       success: false,
-
-      message:
-        'The email was not delivered. The response remains saved as a Draft.',
-
-      errors: []
+      message: mailResult.preview
+        ? 'SMTP is not configured, so the email was not sent. The response remains saved as a Draft.'
+        : `The mail server did not accept the email${
+            mailResult.error ? ` (${mailResult.error})` : ''
+          }. The response remains saved as a Draft.`,
+      errors: [],
+      meta: {
+        emailStatus: mailResult.status
+      }
     });
   }
 
@@ -349,10 +390,21 @@ export async function sendResponse(
     }
   );
 
+  await logActivity(
+    req,
+    'enquiry.response_sent',
+    'Enquiry',
+    enquiry.enquiryId,
+    `Response "${response.subject}" accepted by the mail server for enquiry #${enquiry.enquiryId}`
+  );
+
   return ok(
     res,
-    'Response sent successfully',
-    response
+    'Response accepted by the mail server and marked Sent',
+    response,
+    {
+      emailStatus: mailResult.status
+    }
   );
 }
 
@@ -362,6 +414,7 @@ export async function sendResponse(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD DELETE – delete a draft (DELETE /api/v1/enquiry-responses/:id)
 export async function deleteResponse(
   req,
   res

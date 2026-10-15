@@ -1,3 +1,13 @@
+/*
+| VIVA-UI – H.F. Naaziq – Enquiry Responses (CRUD 2)
+|   CREATE draft → POST /enquiries/:enquiryId/responses
+|   READ → GET /enquiries/:enquiryId/responses
+|   UPDATE edit draft → PUT /enquiry-responses/:id; send → POST /enquiry-responses/:id/send
+|   DELETE draft → DELETE /enquiry-responses/:id
+|   Reply Templates (CRUD 4) can be inserted with the TemplatePicker
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   Edit3,
   Mail,
@@ -10,6 +20,7 @@ import {
   useState
 } from 'react';
 
+import { confirmDialog } from './ui/ConfirmDialog';
 import toast from 'react-hot-toast';
 
 import {
@@ -20,9 +31,14 @@ import {
   useAuth
 } from '../features/auth/AuthContext';
 
+import TemplatePicker
+  from './admin/TemplatePicker';
+
 export default function EnquiryResponsePanel({
   enquiryId,
-  onResponseSent
+  onResponseSent,
+  // Values for the reply-template placeholders (Naaziq – Reply Templates)
+  templateValues = {}
 }) {
   const {
     user
@@ -164,7 +180,7 @@ export default function EnquiryResponsePanel({
     response
   ) => {
     const confirmed =
-      window.confirm(
+      await confirmDialog(
         `Send "${response.subject}" to the customer?`
       );
 
@@ -196,7 +212,7 @@ export default function EnquiryResponsePanel({
     response
   ) => {
     const confirmed =
-      window.confirm(
+      await confirmDialog(
         `Delete the draft "${response.subject}"?`
       );
 
@@ -251,11 +267,33 @@ export default function EnquiryResponsePanel({
         className="response-editor"
         onSubmit={saveDraft}
       >
-        <h4>
-          {editingId
-            ? 'Edit draft'
-            : 'Create response draft'}
-        </h4>
+        <div className="response-editor__head">
+          <h4>
+            {editingId
+              ? 'Edit draft'
+              : 'Create response draft'}
+          </h4>
+
+          {/* VIVA – Naaziq – insert a saved Reply Template */}
+          <TemplatePicker
+            category="Enquiry"
+            values={{
+              reference: `#${enquiryId}`,
+              ...templateValues
+            }}
+            onInsert={(template) => {
+              if (template.subject && !subject.trim()) {
+                setSubject(template.subject);
+              }
+
+              setResponseBody(
+                responseBody.trim()
+                  ? `${responseBody.trim()}\n\n${template.body}`
+                  : template.body
+              );
+            }}
+          />
+        </div>
 
         <label htmlFor="response-subject">
           Subject
