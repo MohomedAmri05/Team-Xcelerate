@@ -1,3 +1,10 @@
+/*
+| VIVA-UI – M.R.M. Amri – Wishlists (CRUD 3)
+|   READ My Wishlist page → GET /wishlist
+|   UPDATE / DELETE under each card → WishlistNote.jsx
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   Heart,
   HeartOff
@@ -19,6 +26,9 @@ import {
 
 import VehicleCard
   from '../components/VehicleCard';
+
+import WishlistNote
+  from '../components/WishlistNote';
 
 export default function Wishlist() {
   const {
@@ -152,14 +162,26 @@ export default function Wishlist() {
         </section>
       )}
 
+      {/* VIVA – Amri – Wishlists: READ (list) with UPDATE/DELETE under each card */}
       {vehicles.length > 0 && (
         <div className="grid">
-          {vehicles.map((vehicle) => (
-            <VehicleCard
-              key={vehicle.vehicleId}
-              v={vehicle}
-            />
-          ))}
+          {wishlistItems
+            .filter((item) => item.vehicle)
+            .map((item) => (
+              <div
+                className="wishlist-item"
+                key={item.wishlistId}
+              >
+                <VehicleCard
+                  v={item.vehicle}
+                />
+
+                <WishlistNote
+                  item={item}
+                  onChanged={() => reload?.()}
+                />
+              </div>
+            ))}
         </div>
       )}
 

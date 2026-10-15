@@ -88,6 +88,17 @@ export default function VehicleCard({
             {money(v.price)}
           </strong>
 
+          {/* VIVA-UI – Herathge – the financing plan that applies to this vehicle */}
+          {v.financePlan?.fromMonthly > 0 && v.status === 'Available' && (
+            <p
+              className={`vehicle-finance-from ${v.financePlan.vehicleSpecific ? 'is-special' : ''}`}
+              title={`${v.financePlan.name}: ${v.financePlan.annualInterestRate}% a year, ${v.financePlan.minDownPaymentPct}% down, up to ${v.financePlan.maxLoanTermMonths} months`}
+            >
+              {v.financePlan.vehicleSpecific && <span>Special finance</span>}
+              Finance from {money(v.financePlan.fromMonthly)} / month
+            </p>
+          )}
+
           <ArrowUpRight
             className="card-arrow"
           />

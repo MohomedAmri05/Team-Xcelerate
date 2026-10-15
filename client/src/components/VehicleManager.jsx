@@ -1,11 +1,31 @@
+/*
+| VIVA-UI – M.R.M. Amri – Vehicles (CRUD 1)
+|   CREATE "Add vehicle" form → POST /vehicles
+|   READ list, search, filters → GET /vehicles
+|   UPDATE "Edit" / status buttons → PUT /vehicles/:id, PATCH /vehicles/:id/status
+|   DELETE "Archive" (soft delete) → DELETE /vehicles/:id
+|   UPDATE "Unarchive" (green) → PATCH /vehicles/:id/restore – the vehicle
+|          goes back to the status it had before it was archived
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   Archive,
+  ArchiveRestore,
   Car,
   Edit3,
   Plus,
   RefreshCw,
   X
 } from 'lucide-react';
+
+import StatusBadge
+  from './ui/StatusBadge';
+
+import {
+  confirmDialog,
+  useConfirm
+} from './ui/ConfirmDialog';
 
 import {
   useEffect,
@@ -47,6 +67,11 @@ const vehicleStatuses = [
   'Available',
   'Sold'
 ];
+
+// Archived = soft-deleted (deletedAt set) or status "Archived".
+const isArchived = (vehicle) =>
+  Boolean(vehicle.deletedAt) ||
+  vehicle.status === 'Archived';
 
 export default function VehicleManager() {
   const {
@@ -90,6 +115,18 @@ export default function VehicleManager() {
     user?.permissions
       ?.canArchiveRecords;
 
+  const confirm = useConfirm();
+
+  const [
+    statusFilter,
+    setStatusFilter
+  ] = useState('');
+
+  const [
+    showArchived,
+    setShowArchived
+  ] = useState(false);
+
   const loadVehicles = async () => {
     setLoading(true);
 
@@ -100,7 +137,14 @@ export default function VehicleManager() {
             limit: 50,
             search:
               search.trim() ||
-              undefined
+              undefined,
+            status:
+              statusFilter ||
+              undefined,
+            includeArchived:
+              showArchived
+                ? 'true'
+                : undefined
           }
         });
 
@@ -130,7 +174,33 @@ export default function VehicleManager() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, statusFilter, showArchived]);
+
+  const restoreVehicle = async (vehicle) => {
+    const previous =
+      ['Draft', 'Available', 'Sold'].includes(vehicle.statusBeforeArchive)
+        ? vehicle.statusBeforeArchive
+        : 'Draft';
+
+    const confirmed = await confirm({
+      title: 'Unarchive this vehicle?',
+      message: `${vehicle.year} ${vehicle.make} ${vehicle.model} will go back to the inventory as ${previous}, the status it had before it was archived.`,
+      confirmLabel: 'Unarchive'
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await api.patch(`/vehicles/${vehicle.vehicleId}/restore`);
+      toast.success(response.data?.message || 'Vehicle unarchived');
+      await loadVehicles();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Could not unarchive the vehicle');
+    }
+  };
 
   const updateField = (
     field,
@@ -261,7 +331,7 @@ export default function VehicleManager() {
     vehicle
   ) => {
     const confirmed =
-      window.confirm(
+      await confirmDialog(
         `Archive ${vehicle.year} ${vehicle.make} ${vehicle.model}?`
       );
 
@@ -569,17 +639,48 @@ export default function VehicleManager() {
       <div className="vehicle-manager-toolbar">
         <h2>Inventory records</h2>
 
-        <input
-          type="search"
-          placeholder="Search make or model"
-          value={search}
-          onChange={(event) => {
-            setSearch(
-              event.target.value
-            );
-          }}
-        />
+        <div className="manager-toolbar">
+          <input
+            type="search"
+            aria-label="Search vehicles"
+            placeholder="Search make, model, type or ID"
+            value={search}
+            onChange={(event) => {
+              setSearch(
+                event.target.value
+              );
+            }}
+          />
+
+          <select
+            aria-label="Filter by status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            <option value="">All statuses</option>
+            {vehicleStatuses.map((status) => (
+              <option key={status}>{status}</option>
+            ))}
+          </select>
+
+          {canArchive && (
+            <label className="toggle-label">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(event) => setShowArchived(event.target.checked)}
+              />
+              Include archived
+            </label>
+          )}
+        </div>
       </div>
+
+      {!loading && (
+        <p className="data-count">
+          {vehicles.length} vehicle{vehicles.length === 1 ? '' : 's'} shown
+        </p>
+      )}
 
       {loading && (
         <div className="state">
@@ -635,18 +736,23 @@ export default function VehicleManager() {
                   ).toLocaleString()}
                 </p>
 
-                <span
-                className={
-                    `managed-vehicle-status ${vehicle.status.toLowerCase()}`
-                }
-                >
-                {vehicle.status}
-                </span>
+                <StatusBadge
+                  kind="vehicle"
+                  status={isArchived(vehicle) ? 'Archived' : vehicle.status}
+                />
+
+                {isArchived(vehicle) && vehicle.statusBeforeArchive && (
+                  <small className="archived-from">
+                    Was {vehicle.statusBeforeArchive} before archiving
+                  </small>
+                )}
               </div>
 
               <div className="managed-vehicle-actions">
                 <button
                   type="button"
+                  disabled={isArchived(vehicle)}
+                  title={isArchived(vehicle) ? 'Unarchive the vehicle to edit it' : undefined}
                   onClick={() => {
                     editVehicle(
                       vehicle
@@ -661,7 +767,9 @@ export default function VehicleManager() {
                   aria-label={
                     `Status for ${vehicle.make} ${vehicle.model}`
                   }
-                  value={vehicle.status}
+                  disabled={isArchived(vehicle)}
+                  title={isArchived(vehicle) ? 'Unarchive the vehicle to change its status' : undefined}
+                  value={isArchived(vehicle) ? 'Archived' : vehicle.status}
                   onChange={(event) => {
                     updateStatus(
                       vehicle,
@@ -679,9 +787,13 @@ export default function VehicleManager() {
                       </option>
                     )
                   )}
+
+                  {isArchived(vehicle) && (
+                    <option value="Archived">Archived</option>
+                  )}
                 </select>
 
-                {canArchive && (
+                {canArchive && !isArchived(vehicle) && (
                   <button
                     className="danger"
                     type="button"
@@ -693,6 +805,19 @@ export default function VehicleManager() {
                   >
                     <Archive size={16} />
                     Archive
+                  </button>
+                )}
+
+                {canArchive && isArchived(vehicle) && (
+                  <button
+                    className="unarchive"
+                    type="button"
+                    onClick={() => {
+                      restoreVehicle(vehicle);
+                    }}
+                  >
+                    <ArchiveRestore size={16} />
+                    Unarchive
                   </button>
                 )}
               </div>

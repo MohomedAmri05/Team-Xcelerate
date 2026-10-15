@@ -1,3 +1,12 @@
+/*
+| VIVA-UI – M.R.M. Amri – Wishlists (CRUD 3)
+|   CREATE heart button → POST /wishlist/:vehicleId
+|   READ saved state → GET /wishlist/:vehicleId/check
+|   DELETE heart button again → DELETE /wishlist/:vehicleId
+|   (UPDATE – the note – is on the My Wishlist page, WishlistNote.jsx)
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   Heart
 } from 'lucide-react';
@@ -113,13 +122,11 @@ export default function WishlistButton({
         'Please log in to save vehicles'
       );
 
-      navigate('/login', {
-        state: {
-          from:
-            location.pathname +
-            location.search
-        }
-      });
+      navigate(
+        `/login?redirect=${encodeURIComponent(
+          location.pathname + location.search
+        )}`
+      );
 
       return;
     }

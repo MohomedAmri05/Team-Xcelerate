@@ -1,3 +1,12 @@
+/*
+| VIVA-UI – M.R.M. Amri – Vehicle Images (CRUD 2)
+|   CREATE upload → POST /vehicles/:vehicleId/images
+|   READ gallery → GET /vehicles/:vehicleId/images
+|   UPDATE alt text / order / primary → PATCH /vehicle-images/:id
+|   DELETE (Admin) → DELETE /vehicle-images/:id
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   Image as ImageIcon,
   Star,
@@ -10,6 +19,7 @@ import {
   useState
 } from 'react';
 
+import { confirmDialog } from './ui/ConfirmDialog';
 import toast from 'react-hot-toast';
 
 import {
@@ -263,7 +273,7 @@ export default function VehicleImageManager() {
     image
   ) => {
     const confirmed =
-      window.confirm(
+      await confirmDialog(
         'Permanently delete this image and its stored file?'
       );
 

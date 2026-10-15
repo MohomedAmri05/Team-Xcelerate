@@ -5,6 +5,10 @@ import {
 
 import {
   ArrowRight,
+  CalendarCheck,
+  Calculator,
+  Car,
+  Headset,
   ShieldCheck,
   Sparkles,
   Wrench
@@ -18,6 +22,10 @@ import VehicleCard
   from '../components/VehicleCard';
 
 import {
+  useAuth
+} from '../features/auth/AuthContext';
+
+import {
   useApi
 } from '../hooks/useApi';
 
@@ -28,6 +36,16 @@ import {
 } from '../utils/motionVariants';
 
 export default function Home() {
+  const {
+    user
+  } = useAuth();
+
+  // VIVA-UI – each journey tile opens the page where that task is done.
+  const supportLink =
+    user?.role === 'Customer'
+      ? '/my-complaints'
+      : '/contact';
+
   const reduceMotion =
     useReducedMotion();
 
@@ -36,6 +54,40 @@ export default function Home() {
   } = useApi('/vehicles', {
     limit: 4
   });
+
+  // Live showroom figures (no hard-coded numbers).
+  const {
+    data: stock,
+    meta: stockMeta
+  } = useApi('/vehicles', {
+    limit: 50
+  });
+
+  const stockRows =
+    Array.isArray(stock) ? stock : [];
+
+  const makes = new Set(
+    stockRows.map((vehicle) => vehicle.make)
+  ).size;
+
+  const prices = stockRows
+    .map((vehicle) => Number(vehicle.price))
+    .filter((price) => price > 0);
+
+  const fromPrice = prices.length
+    ? Math.min(...prices)
+    : null;
+
+  const typeCounts = stockRows.reduce(
+    (counts, vehicle) => ({
+      ...counts,
+      [vehicle.type]: (counts[vehicle.type] || 0) + 1,
+      ...(vehicle.condition === 'Reconditioned'
+        ? { Reconditioned: (counts.Reconditioned || 0) + 1 }
+        : {})
+    }),
+    {}
+  );
 
   return (
     <>
@@ -100,8 +152,39 @@ export default function Home() {
 
           </div>
         </motion.div>
-
       </section>
+
+      {stockMeta?.total > 0 && (
+        <motion.section
+          className="home-stats"
+          variants={stagger(0.08)}
+          initial="hidden"
+          whileInView="show"
+          viewport={viewport}
+          aria-label="Showroom at a glance"
+        >
+          <motion.div variants={fadeUp}>
+            <strong>{stockMeta.total}</strong>
+            <span>vehicles available now</span>
+          </motion.div>
+          <motion.div variants={fadeUp}>
+            <strong>{makes}</strong>
+            <span>{makes === 1 ? 'manufacturer' : 'manufacturers'} in stock</span>
+          </motion.div>
+          {fromPrice && (
+            <motion.div variants={fadeUp}>
+              <strong>
+                LKR {(fromPrice / 1000000).toLocaleString('en-LK', { maximumFractionDigits: 1 })}M
+              </strong>
+              <span>starting price</span>
+            </motion.div>
+          )}
+          <motion.div variants={fadeUp}>
+            <strong>Kandy</strong>
+            <span>Katugastota showroom</span>
+          </motion.div>
+        </motion.section>
+      )}
 
       <section className="section">
         <motion.div
@@ -184,11 +267,22 @@ export default function Home() {
               variants={fadeUp}
             >
               <Link
-                to={`/inventory?type=${type}`}
-              >
-                {type}
-                <ArrowRight />
-              </Link>
+                  to={
+                    type === 'Reconditioned'
+                      ? '/inventory?condition=Reconditioned'
+                      : `/inventory?type=${type}`
+                  }
+                >
+                  <span>
+                    {type}
+                    {typeCounts[type] ? (
+                      <small className="category-count">
+                        {typeCounts[type]} available
+                      </small>
+                    ) : null}
+                  </span>
+                  <ArrowRight />
+                </Link>
             </motion.div>
           ))}
         </motion.div>
@@ -244,6 +338,48 @@ export default function Home() {
               in Katugastota, Kandy.
             </p>
           </motion.article>
+        </motion.div>
+      </section>
+
+      <section className="section home-journey">
+        <motion.div
+          className="section-head"
+          variants={fadeUp}
+          initial="hidden"
+          whileInView="show"
+          viewport={viewport}
+        >
+          <div>
+            <p className="eyebrow">YOUR HIGH STREET JOURNEY</p>
+            <h2>Everything in one account.</h2>
+          </div>
+        </motion.div>
+
+        <motion.div
+          className="journey-grid"
+          variants={stagger(0.1)}
+          initial="hidden"
+          whileInView="show"
+          viewport={viewport}
+        >
+          {[
+            [Car, 'Browse and save', 'Filter the live inventory and keep favourites in your wishlist.', '/inventory'],
+            [Calculator, 'Plan the finance', 'Choose a vehicle, work out an illustrative monthly payment and apply.', '/finance'],
+            [CalendarCheck, 'Book a test drive', 'Choose a vehicle and a slot online and get an email when it is confirmed.', '/book-test-drive'],
+            [Headset, 'Get support', 'Track enquiries and complaints with a reference number.', supportLink]
+          ].map(([Icon, title, copy, link]) => (
+            <motion.article key={title} variants={fadeUp}>
+              <Link to={link}>
+                <Icon aria-hidden="true" />
+                <h3>{title}</h3>
+                <p>{copy}</p>
+                <span className="journey-grid__more">
+                  Learn more
+                  <ArrowRight />
+                </span>
+              </Link>
+            </motion.article>
+          ))}
         </motion.div>
       </section>
 

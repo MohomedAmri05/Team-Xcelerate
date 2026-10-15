@@ -1,3 +1,16 @@
+/*
+|--------------------------------------------------------------------------
+| VIVA – M.R.M. Amri – Vehicle Inventory module
+| CRUD resource 3: Wishlists (table `wishlists`)
+|--------------------------------------------------------------------------
+|   CREATE  addToWishlist        POST   /api/v1/wishlist/:vehicleId
+|   READ    listWishlist         GET    /api/v1/wishlist
+|           checkWishlist        GET    /api/v1/wishlist/:vehicleId/check
+|   UPDATE  updateWishlistNote   PATCH  /api/v1/wishlist/:vehicleId
+|   DELETE  removeFromWishlist   DELETE /api/v1/wishlist/:vehicleId
+| Customers only; every query is scoped to the signed-in customer.
+*/
+
 import {
   Vehicle,
   VehicleImage,
@@ -8,9 +21,23 @@ import {
   ok
 } from '../middleware/core.js';
 
+import { logActivity } from '../services/activity.service.js';
+
+const NOTE_MAX = 255;
+
+// Trims the note; an empty note is stored as NULL.
+function cleanNote(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const text = String(value).trim();
+  return text ? text.slice(0, NOTE_MAX) : null;
+}
+
 /*
 |--------------------------------------------------------------------------
-| List Customer Wishlist
+| READ – List Customer Wishlist
 |--------------------------------------------------------------------------
 */
 
@@ -55,7 +82,7 @@ export async function listWishlist(
 
 /*
 |--------------------------------------------------------------------------
-| Check if a Vehicle is Saved
+| READ – Check if a Vehicle is Saved
 |--------------------------------------------------------------------------
 */
 
@@ -90,7 +117,7 @@ export async function checkWishlist(
 
 /*
 |--------------------------------------------------------------------------
-| Add Vehicle to Wishlist
+| CREATE – Add Vehicle to Wishlist
 |--------------------------------------------------------------------------
 */
 
@@ -145,7 +172,10 @@ export async function addToWishlist(
         req.user.userId,
 
       vehicleId:
-        vehicle.vehicleId
+        vehicle.vehicleId,
+
+      // Optional private note sent with the CREATE request.
+      note: cleanNote(req.body?.note)
     }
   });
 
@@ -165,7 +195,7 @@ export async function addToWishlist(
 
 /*
 |--------------------------------------------------------------------------
-| Remove Vehicle from Wishlist
+| DELETE – Remove Vehicle from Wishlist
 |--------------------------------------------------------------------------
 */
 
@@ -200,5 +230,52 @@ export async function removeFromWishlist(
   return ok(
     res,
     'Vehicle removed from your wishlist'
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE – Edit the private note on a saved vehicle
+|--------------------------------------------------------------------------
+| PATCH /api/v1/wishlist/:vehicleId   body: { note: "..." }
+| Writes wishlists.note for the signed-in customer's own row only.
+*/
+
+export async function updateWishlistNote(
+  req,
+  res
+) {
+  const vehicleId =
+    Number(req.params.vehicleId);
+
+  const wishlistItem =
+    await Wishlist.findOne({
+      where: {
+        customerId:
+          req.user.userId,
+
+        vehicleId
+      }
+    });
+
+  if (!wishlistItem) {
+    return res.status(404).json({
+      success: false,
+      message:
+        'Vehicle is not in your wishlist',
+      errors: []
+    });
+  }
+
+  await wishlistItem.update({
+    note: req.validated.body.note ? req.validated.body.note : null
+  });
+
+  await logActivity(req, 'wishlist.note_updated', 'Wishlist', wishlistItem.wishlistId, `Wishlist note updated for vehicle #${vehicleId}`);
+
+  return ok(
+    res,
+    'Wishlist note saved',
+    wishlistItem
   );
 }
