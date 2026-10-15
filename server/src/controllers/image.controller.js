@@ -1,3 +1,16 @@
+/*
+|--------------------------------------------------------------------------
+| VIVA-HEADER – M.R.M. Amri – Vehicle Inventory
+| CRUD resource 2: Vehicle Images (table `vehicle_images` + files in server/uploads)
+|--------------------------------------------------------------------------
+|   CREATE  uploadImages         POST /api/v1/vehicles/:vehicleId/images
+|   READ    listImages           GET /api/v1/vehicles/:vehicleId/images
+|   UPDATE  updateImage          PATCH /api/v1/vehicle-images/:id
+|   DELETE  deleteImage          DELETE /api/v1/vehicle-images/:id
+| Every write goes through Sequelize to MySQL/MariaDB and is recorded in
+| activity_logs (services/activity.service.js) where it changes data.
+*/
+
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -10,6 +23,16 @@ import {
 import {
   ok
 } from '../middleware/core.js';
+
+import {
+  IMAGE_TYPES,
+  detectFileType,
+  readFileHead
+} from '../services/file.service.js';
+
+import {
+  logActivity
+} from '../services/activity.service.js';
 
 function localImagePath(url) {
   if (
@@ -37,6 +60,7 @@ async function deleteUploadedFiles(
   );
 }
 
+// VIVA CRUD READ – gallery (GET /api/v1/vehicles/:vehicleId/images)
 export async function listImages(
   req,
   res
@@ -77,6 +101,7 @@ export async function listImages(
   );
 }
 
+// VIVA CRUD CREATE – upload up to 10 JPG/PNG/WebP (content-checked) (POST /api/v1/vehicles/:vehicleId/images)
 export async function uploadImages(
   req,
   res
@@ -91,6 +116,24 @@ export async function uploadImages(
         'Select at least one image to upload',
       errors: []
     });
+  }
+
+  // Verify the real content of every file, not only the browser MIME type.
+  for (const file of files) {
+    const detected = detectFileType(
+      await readFileHead(file.path)
+    );
+
+    if (!IMAGE_TYPES.includes(detected)) {
+      await deleteUploadedFiles(files);
+
+      return res.status(415).json({
+        success: false,
+        message:
+          `${file.originalname} is not a valid JPEG, PNG or WebP image`,
+        errors: []
+      });
+    }
   }
 
   const vehicle =
@@ -164,6 +207,14 @@ export async function uploadImages(
         }
       );
 
+    await logActivity(
+      req,
+      'vehicle.images_uploaded',
+      'Vehicle',
+      vehicle.vehicleId,
+      `${images.length} image(s) uploaded for ${vehicle.make} ${vehicle.model}`
+    );
+
     return res.status(201).json({
       success: true,
       message: 'Images uploaded',
@@ -176,6 +227,7 @@ export async function uploadImages(
   }
 }
 
+// VIVA CRUD UPDATE – alt text, order, primary photo (PATCH /api/v1/vehicle-images/:id)
 export async function updateImage(
   req,
   res
@@ -255,6 +307,7 @@ export async function updateImage(
   );
 }
 
+// VIVA CRUD DELETE – Admin only – removes row and file (DELETE /api/v1/vehicle-images/:id)
 export async function deleteImage(
   req,
   res
@@ -324,6 +377,14 @@ export async function deleteImage(
         }
       }
     }
+  );
+
+  await logActivity(
+    req,
+    'vehicle.image_deleted',
+    'Vehicle',
+    vehicleId,
+    `Image #${req.params.id} deleted`
   );
 
   return ok(

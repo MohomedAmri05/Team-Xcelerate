@@ -1,3 +1,13 @@
+/*
+| VIVA-UI – M.R. Ahamed – Users (own account)
+|   UPDATE profile → PUT /auth/profile
+|   UPDATE password → PUT /auth/change-password
+|   October 2026: show/hide + strength meter; when an Admin created the
+|   account with a temporary password (?password=required) the user must
+|   change it here first – only the account owner can change a password.
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   useEffect,
   useState
@@ -6,11 +16,20 @@ import {
 import {
   KeyRound,
   Save,
+  ShieldAlert,
   ShieldCheck,
   UserRound
 } from 'lucide-react';
 
 import toast from 'react-hot-toast';
+
+import {
+  useNavigate
+} from 'react-router-dom';
+
+import PasswordInput, {
+  passwordStrength
+} from '../components/ui/PasswordInput';
 
 import {
   api
@@ -25,6 +44,12 @@ export default function Profile() {
     user,
     refreshUser
   } = useAuth();
+
+  const navigate = useNavigate();
+
+  const mustChange = Boolean(
+    user?.mustChangePassword
+  );
 
   const [
     profileForm,
@@ -120,6 +145,14 @@ export default function Profile() {
   const submitPassword = async (event) => {
     event.preventDefault();
 
+    if (!passwordStrength(passwordForm.newPassword).meetsRules) {
+      toast.error(
+        'The new password does not meet the rules yet'
+      );
+
+      return;
+    }
+
     if (
       passwordForm.newPassword !==
       passwordForm.confirmPassword
@@ -154,6 +187,18 @@ export default function Profile() {
       toast.success(
         'Password changed successfully'
       );
+
+      // The temporary password has been replaced: continue to the site.
+      if (mustChange) {
+        const refreshed = await refreshUser();
+
+        navigate(
+          refreshed.role === 'Admin' || refreshed.role === 'Staff'
+            ? '/admin'
+            : '/',
+          { replace: true }
+        );
+      }
     } catch (error) {
       const validationErrors =
         error.response?.data?.errors;
@@ -189,7 +234,20 @@ export default function Profile() {
         </div>
       </div>
 
-      <div className="profile-grid">
+      {mustChange && (
+        <div className="auth-notice auth-notice--warning profile-required" role="alert">
+          <ShieldAlert aria-hidden="true" />
+          <div>
+            <strong>Change your temporary password</strong>
+            <p>
+              Your account was created by an Admin with a temporary password. Choose your own password below — after
+              that only you will know it. The rest of the website opens once it is changed.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className={`profile-grid ${mustChange ? 'profile-grid--password-first' : ''}`}>
         <form
           className="panel profile-form"
           onSubmit={submitProfile}
@@ -244,7 +302,7 @@ export default function Profile() {
               type="tel"
               name="phone"
               required
-              pattern="\+?[0-9 ()-]{7,20}"
+              pattern="\+?[0-9 \(\)\-]{7,20}"
               autoComplete="tel"
               value={profileForm.phone}
               onChange={updateProfileField}
@@ -294,56 +352,48 @@ export default function Profile() {
             </div>
           </div>
 
-          <label>
-            Current password
+          <PasswordInput
+            label={mustChange ? 'Temporary password' : 'Current password'}
+            name="currentPassword"
+            required
+            minLength={8}
+            autoComplete="current-password"
+            value={
+              passwordForm.currentPassword
+            }
+            onChange={updatePasswordField}
+          />
 
-            <input
-              type="password"
-              name="currentPassword"
-              required
-              minLength="8"
-              maxLength="72"
-              autoComplete="current-password"
-              value={
-                passwordForm.currentPassword
-              }
-              onChange={updatePasswordField}
-            />
-          </label>
+          <PasswordInput
+            label="New password"
+            name="newPassword"
+            required
+            minLength={10}
+            autoComplete="new-password"
+            value={
+              passwordForm.newPassword
+            }
+            onChange={updatePasswordField}
+            showStrength
+          />
 
-          <label>
-            New password
-
-            <input
-              type="password"
-              name="newPassword"
-              required
-              minLength="10"
-              maxLength="72"
-              autoComplete="new-password"
-              value={
-                passwordForm.newPassword
-              }
-              onChange={updatePasswordField}
-            />
-          </label>
-
-          <label>
-            Confirm new password
-
-            <input
-              type="password"
-              name="confirmPassword"
-              required
-              minLength="10"
-              maxLength="72"
-              autoComplete="new-password"
-              value={
-                passwordForm.confirmPassword
-              }
-              onChange={updatePasswordField}
-            />
-          </label>
+          <PasswordInput
+            label="Confirm new password"
+            name="confirmPassword"
+            required
+            minLength={10}
+            autoComplete="new-password"
+            value={
+              passwordForm.confirmPassword
+            }
+            onChange={updatePasswordField}
+            hint={
+              passwordForm.confirmPassword &&
+              passwordForm.confirmPassword !== passwordForm.newPassword
+                ? 'The passwords do not match yet.'
+                : undefined
+            }
+          />
 
           <p className="password-guidance">
             Use at least 10 characters with an

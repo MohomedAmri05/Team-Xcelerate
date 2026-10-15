@@ -19,10 +19,20 @@ import { useAuth } from '../features/auth/AuthContext';
 import FinanceCalculator from '../components/FinanceCalculator';
 import WishlistButton from '../components/WishlistButton';
 import TestDriveBookingForm from '../components/TestDriveBookingForm';
+import FinanceApplicationForm from '../components/finance/FinanceApplicationForm';
 
 import {
   mediaUrl
 } from '../utils/mediaUrl';
+
+import {
+  phoneHref,
+  useContactDetails,
+  whatsappHref
+} from '../hooks/useContactDetails';
+
+import StatusBadge
+  from '../components/ui/StatusBadge';
 
 export default function VehicleDetails() {
   const { id } = useParams();
@@ -48,6 +58,17 @@ export default function VehicleDetails() {
 
   const [submitting, setSubmitting] =
     useState(false);
+
+  // VIVA – Herathge – Finance Applications: CREATE from the calculator.
+  const [financeDefaults, setFinanceDefaults] =
+    useState(null);
+
+  const [submittedApplication, setSubmittedApplication] =
+    useState(null);
+
+  const {
+    details: contact
+  } = useContactDetails();
 
   if (loading || authenticationLoading) {
     return (
@@ -200,13 +221,24 @@ export default function VehicleDetails() {
           ).toLocaleString()}
         </strong>
 
-        <span
-          className={
-            `status ${vehicle.status.toLowerCase()}`
-          }
-        >
-          {vehicle.status}
+        <span className="vehicle-info__status">
+          <StatusBadge
+            kind="vehicle"
+            status={vehicle.status}
+          />
         </span>
+
+        {/* VIVA-UI – Herathge – the financing plan that applies to this vehicle */}
+        {vehicle.financePlan?.fromMonthly > 0 && vehicle.status === 'Available' && (
+          <p className={`vehicle-finance-summary ${vehicle.financePlan.vehicleSpecific ? 'is-special' : ''}`}>
+            {vehicle.financePlan.vehicleSpecific && <span>Special finance for this vehicle</span>}
+            Finance from <strong>LKR {Number(vehicle.financePlan.fromMonthly).toLocaleString()} / month</strong>
+            <small>
+              {vehicle.financePlan.name} · {vehicle.financePlan.annualInterestRate}% a year · {vehicle.financePlan.minDownPaymentPct}% down
+              (LKR {Number(vehicle.financePlan.minDownPayment).toLocaleString()}) · up to {vehicle.financePlan.maxLoanTermMonths} months
+            </small>
+          </p>
+        )}
 
         <dl>
           {[
@@ -240,25 +272,30 @@ export default function VehicleDetails() {
         <p>{vehicle.description}</p>
 
         <div className="actions vehicle-detail-actions">
-          <a
-            className="button"
-            href="tel:+94810000000"
-          >
-            <Phone />
-            Call
-          </a>
+          {phoneHref(contact?.phone) && (
+            <a
+              className="button"
+              href={phoneHref(contact.phone)}
+            >
+              <Phone />
+              Call
+            </a>
+          )}
 
-          <a
-            className="button ghost"
-            href={`https://wa.me/94810000000?text=${encodeURIComponent(
-              `I'm interested in ${vehicle.year} ${vehicle.make} ${vehicle.model}`
-            )}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <MessageCircle />
-            WhatsApp
-          </a>
+          {whatsappHref(contact?.phone) && (
+            <a
+              className="button ghost"
+              href={whatsappHref(
+                contact.phone,
+                `I'm interested in ${vehicle.year} ${vehicle.make} ${vehicle.model}`
+              )}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <MessageCircle />
+              WhatsApp
+            </a>
+          )}
 
           <WishlistButton
             vehicleId={vehicle.vehicleId}
@@ -269,7 +306,55 @@ export default function VehicleDetails() {
 
       <FinanceCalculator
         price={Number(vehicle.price)}
+        vehicleId={vehicle.vehicleId}
+        onApply={
+          isAvailable && !isOperationalUser
+            ? (figures) => {
+                if (!isAuthenticated) {
+                  window.location.assign(loginPath);
+                  return;
+                }
+
+                setSubmittedApplication(null);
+                setFinanceDefaults(figures);
+                window.requestAnimationFrame(() =>
+                  document.getElementById('finance-application')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                );
+              }
+            : undefined
+        }
       />
+
+      {/* VIVA – Herathge – Finance Applications: customer CREATE */}
+      {isCustomer && isAvailable && (financeDefaults || submittedApplication) && (
+        <section className="panel finance-application-panel" id="finance-application">
+          <p className="eyebrow">FINANCE APPLICATION</p>
+
+          {submittedApplication ? (
+            <>
+              <h2>Application {submittedApplication.reference} submitted.</h2>
+              <p>
+                We emailed you a copy. You can follow it, add payslips or bank statements, change it or withdraw it from{' '}
+                <Link to="/my-finance">My finance applications</Link>.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2>Apply for financing on this vehicle.</h2>
+              <FinanceApplicationForm
+                vehicle={vehicle}
+                defaults={financeDefaults}
+                phone={user?.phone}
+                onSaved={(application) => {
+                  setSubmittedApplication(application);
+                  setFinanceDefaults(null);
+                }}
+                onCancel={() => setFinanceDefaults(null)}
+              />
+            </>
+          )}
+        </section>
+      )}
 
       {!isAuthenticated && (
         <section className="panel enquiry auth-required-panel">

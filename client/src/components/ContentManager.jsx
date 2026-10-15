@@ -1,3 +1,12 @@
+/*
+| VIVA-UI – S.N. Herathge – Company Content (CRUD 1)
+|   CREATE → POST /content
+|   READ → GET /content
+|   UPDATE → PUT /content/:id
+|   DELETE → DELETE /content/:id
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   Edit3,
   FileText,
@@ -12,6 +21,7 @@ import {
   useState
 } from 'react';
 
+import { confirmDialog } from './ui/ConfirmDialog';
 import toast from 'react-hot-toast';
 
 import {
@@ -208,7 +218,7 @@ export default function ContentManager() {
     record
   ) => {
     const confirmed =
-      window.confirm(
+      await confirmDialog(
         `Delete the "${record.title}" content record?`
       );
 

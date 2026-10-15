@@ -1,3 +1,12 @@
+/*
+| VIVA-UI – M.R. Ahamed – Authentication
+|   Login → POST /auth/login (creates a Session)
+|   "Forgot password?" → /forgot-password (the owner resets it by email)
+|   A temporary password set by an Admin → /profile?password=required
+|   A locked account (too many wrong passwords) shows when to try again
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import { useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import {
@@ -35,6 +44,10 @@ export default function Login() {
     searchParams.get('redirect');
 
   const getDestination = (loggedInUser) => {
+    if (loggedInUser.mustChangePassword) {
+      return '/profile?password=required';
+    }
+
     if (
       loggedInUser.role === 'Admin' ||
       loggedInUser.role === 'Staff'
@@ -87,6 +100,11 @@ export default function Login() {
       if (error.response?.status === 429) {
         toast.error(
           'Too many login attempts. Please wait and try again.'
+        );
+      } else if (error.response?.status === 423) {
+        toast.error(
+          error.response.data.message,
+          { duration: 8000 }
         );
       } else {
         toast.error(
@@ -171,6 +189,13 @@ export default function Login() {
             </button>
           </div>
         </label>
+
+        <Link
+          className="auth-forgot-link"
+          to="/forgot-password"
+        >
+          Forgot password?
+        </Link>
 
         <button
           className="button"

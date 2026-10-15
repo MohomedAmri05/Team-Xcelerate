@@ -41,6 +41,22 @@ export default function ProtectedRoute({
     );
   }
 
+  /*
+   * VIVA – Ahamed – an Admin-set temporary password must be changed by
+   * the user first (the API also refuses other requests until then).
+   */
+  if (
+    user.mustChangePassword &&
+    location.pathname !== '/profile'
+  ) {
+    return (
+      <Navigate
+        to="/profile?password=required"
+        replace
+      />
+    );
+  }
+
   if (
     allowedRoles &&
     !allowedRoles.includes(user.role)

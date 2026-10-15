@@ -26,6 +26,15 @@ const Wishlist = sequelize.define(
       field: 'vehicle_id',
       type: DataTypes.INTEGER,
       allowNull: false
+    },
+
+    /*
+     * VIVA – Amri – Wishlists: UPDATE.
+     * Private note the customer can edit on a saved vehicle.
+     */
+    note: {
+      type: DataTypes.STRING(255),
+      allowNull: true
     }
   },
   {

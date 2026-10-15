@@ -1,3 +1,12 @@
+/*
+| VIVA-UI – H.F. Naaziq – Enquiries (CRUD 1), dashboard
+|   READ list / search / details → GET /enquiries(/:id)
+|   UPDATE status / assignment → PATCH /enquiries/:id(/assign)
+|   DELETE (Admin) → DELETE /enquiries/:id
+|   (CREATE is the customer form on the vehicle page and Contact page)
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   Archive,
   Mail,
@@ -12,6 +21,7 @@ import {
   useState
 } from 'react';
 
+import { confirmDialog } from './ui/ConfirmDialog';
 import toast from 'react-hot-toast';
 
 import {
@@ -24,6 +34,62 @@ import {
 
 import EnquiryResponsePanel
   from './EnquiryResponsePanel';
+
+import SearchBar
+  from './ui/SearchBar';
+
+import StatusBadge
+  from './ui/StatusBadge';
+
+import ProgressSteps
+  from './ui/ProgressSteps';
+
+function EnquiryEmailReplies({ enquiryId }) {
+  const [replies, setReplies] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+
+    api
+      .get(`/enquiries/${enquiryId}/inbound`)
+      .then((response) => {
+        if (active) {
+          setReplies(response.data.data || []);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setReplies([]);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [enquiryId]);
+
+  if (!replies.length) {
+    return null;
+  }
+
+  return (
+    <div className="enquiry-message enquiry-email-replies">
+      <strong>Customer replies received by email</strong>
+      {replies.map((reply) => (
+        <div key={reply.inboundId} className="enquiry-email-reply">
+          <small>
+            {new Date(reply.receivedAt).toLocaleString('en-LK', {
+              dateStyle: 'medium',
+              timeStyle: 'short'
+            })}{' '}
+            · {reply.subject}
+          </small>
+          <p className="pre-wrap">{reply.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const enquiryStatuses = [
   'New',
@@ -65,12 +131,22 @@ export default function EnquiryManager() {
   const isAdmin =
     user?.role === 'Admin';
 
+  const [
+    search,
+    setSearch
+  ] = useState('');
+
   const loadEnquiries = async () => {
     setLoading(true);
 
     try {
       const response =
-        await api.get('/enquiries');
+        await api.get('/enquiries', {
+          params: {
+            limit: 100,
+            search: search || undefined
+          }
+        });
 
       const records =
         Array.isArray(
@@ -136,9 +212,13 @@ export default function EnquiryManager() {
   };
 
   useEffect(() => {
-    loadEnquiries();
     loadStaff();
   }, []);
+
+  useEffect(() => {
+    loadEnquiries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const filteredEnquiries =
     useMemo(() => {
@@ -243,7 +323,7 @@ export default function EnquiryManager() {
     }
 
     const confirmed =
-      window.confirm(
+      await confirmDialog(
         `Permanently delete enquiry #${selected.enquiryId}?`
       );
 
@@ -287,6 +367,14 @@ export default function EnquiryManager() {
           </p>
         </div>
 
+        <div className="manager-toolbar">
+          <SearchBar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search customer, email, vehicle or ID"
+            historyScope="admin-enquiries"
+          />
+
         <label>
           Status
 
@@ -314,6 +402,7 @@ export default function EnquiryManager() {
             )}
           </select>
         </label>
+        </div>
       </div>
 
       <div className="enquiry-workspace">
@@ -407,19 +496,17 @@ export default function EnquiryManager() {
                     </h3>
                   </div>
 
-                  <span
-                    className={
-                      `enquiry-status ${selected.status
-                        .toLowerCase()
-                        .replaceAll(
-                          ' ',
-                          '-'
-                        )}`
-                    }
-                  >
-                    {selected.status}
-                  </span>
+                  <StatusBadge
+                    kind="enquiry"
+                    status={selected.status}
+                  />
                 </div>
+
+                <ProgressSteps
+                  kind="enquiry"
+                  status={selected.status}
+                  compact
+                />
 
                 <div className="enquiry-contact">
                   <span>
@@ -453,6 +540,10 @@ export default function EnquiryManager() {
 
                   <p>{selected.message}</p>
                 </div>
+
+                <EnquiryEmailReplies
+                  enquiryId={selected.enquiryId}
+                />
 
                 {isAdmin && (
                   <label>
@@ -557,6 +648,10 @@ export default function EnquiryManager() {
                 onResponseSent={
                   loadEnquiries
                 }
+                templateValues={{
+                  customer_name: selected.customerName,
+                  vehicle: selected.vehicleReference
+                }}
               />
             </>
           )}

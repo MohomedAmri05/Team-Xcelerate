@@ -20,6 +20,13 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Private documents (never commit customer files)
+server/storage/documents/*
+!server/storage/documents/.gitkeep
+
+# Local notes that may contain credentials
+High Street.txt
+
 # Uploaded vehicle images
 server/uploads/*
 !server/uploads/.gitkeep

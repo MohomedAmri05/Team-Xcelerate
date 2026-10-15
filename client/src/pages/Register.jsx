@@ -1,8 +1,16 @@
+/*
+| VIVA-UI – M.R. Ahamed – Authentication
+|   Register → POST /auth/register (creates a Customer user + Session)
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import { useState } from 'react';
 import {
   Eye,
   EyeOff
 } from 'lucide-react';
+
+import { PasswordStrength } from '../components/ui/PasswordInput';
 
 import {
   Link,
@@ -165,7 +173,7 @@ export default function Register() {
             name="phone"
             autoComplete="tel"
             required
-            pattern="\+?[0-9 ()-]{7,20}"
+            pattern="\+?[0-9 \(\)\-]{7,20}"
             value={form.phone}
             onChange={handleChange}
             placeholder="0771234567"
@@ -227,6 +235,9 @@ export default function Register() {
               )}
             </button>
           </div>
+        
+          {/* VIVA-UI – Ahamed – live password strength (same rules as the API) */}
+          <PasswordStrength value={form.password} />
         </label>
 
         <label>

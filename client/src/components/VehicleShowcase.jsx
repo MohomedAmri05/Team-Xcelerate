@@ -90,7 +90,9 @@ export default function VehicleShowcase({
           ))}
 
         {!loading &&
-          vehicles.map((vehicle) => {
+          vehicles
+            .slice(0, 3)
+            .map((vehicle) => {
             const image =
               vehicle.images?.find(
                 (item) => item.isPrimary

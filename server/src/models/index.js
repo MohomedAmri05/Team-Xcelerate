@@ -95,6 +95,39 @@ export const User = sequelize.define(
       field: 'last_login_at',
       type: DataTypes.DATE,
       allowNull: true
+    },
+
+    /*
+     * VIVA – Ahamed – Users (migration 202610150001)
+     * mustChangePassword: an Admin-set temporary password must be replaced
+     * by the user at the first sign-in (only the owner knows the password).
+     * failedLoginCount / lockedUntil: account lockout after repeated wrong
+     * passwords; an Admin can unlock the account.
+     */
+    mustChangePassword: {
+      field: 'must_change_password',
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
+    },
+
+    failedLoginCount: {
+      field: 'failed_login_count',
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    },
+
+    lockedUntil: {
+      field: 'locked_until',
+      type: DataTypes.DATE,
+      allowNull: true
+    },
+
+    passwordChangedAt: {
+      field: 'password_changed_at',
+      type: DataTypes.DATE,
+      allowNull: true
     }
   },
   {
@@ -159,6 +192,42 @@ export const Session = sequelize.define(
       field: 'user_agent',
       type: DataTypes.STRING(500),
       allowNull: true
+    },
+
+    /*
+     * VIVA – Ahamed – Sessions "Check activity" (migration 202610150001)
+     */
+    lastSeenAt: {
+      field: 'last_seen_at',
+      type: DataTypes.DATE,
+      allowNull: true
+    },
+
+    refreshCount: {
+      field: 'refresh_count',
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    },
+
+    // logout | revoked | signed_out_others | password_changed |
+    // password_reset | deactivated
+    endedReason: {
+      field: 'ended_reason',
+      type: DataTypes.STRING(30),
+      allowNull: true
+    },
+
+    endedBy: {
+      field: 'ended_by',
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
+
+    deviceLabel: {
+      field: 'device_label',
+      type: DataTypes.STRING(120),
+      allowNull: true
     }
   },
   {
@@ -219,8 +288,30 @@ export const StaffPermission = sequelize.define(
       defaultValue: false
     },
 
+    canManageComplaints: {
+      field: 'can_manage_complaints',
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
+    },
+
     canViewLimitedAnalytics: {
       field: 'can_view_limited_analytics',
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
+    },
+
+    // VIVA – Ahamed – two new permissions (migration 202610150001)
+    canManageBookings: {
+      field: 'can_manage_bookings',
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
+    },
+
+    canExportReports: {
+      field: 'can_export_reports',
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false
@@ -326,6 +417,13 @@ export const Vehicle = sequelize.define(
       defaultValue: 'Draft'
     },
 
+    // VIVA – Amri – the status it had when archived; "Unarchive" puts it back
+    statusBeforeArchive: {
+      field: 'status_before_archive',
+      type: DataTypes.STRING(20),
+      allowNull: true
+    },
+
     createdBy: {
       field: 'created_by',
       type: DataTypes.INTEGER,
@@ -336,7 +434,9 @@ export const Vehicle = sequelize.define(
     ...opts,
     tableName: 'vehicles',
     paranoid: true,
-    deletedAt: 'deleted_at'
+    // Attribute "deletedAt" (column deleted_at) so the API returns deletedAt
+    // and the dashboard can tell an archived vehicle apart.
+    deletedAt: 'deletedAt'
   }
 );
 
@@ -526,10 +626,11 @@ export const Response = sequelize.define(
       allowNull: false
     },
 
+    // NULL once the Staff member who wrote it was permanently deleted
     adminId: {
       field: 'admin_id',
       type: DataTypes.INTEGER,
-      allowNull: false
+      allowNull: true
     },
 
     subject: {
@@ -666,6 +767,16 @@ export const Finance = sequelize.define(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false
+    },
+
+    /*
+     * VIVA – Herathge – the vehicle this plan is for (one plan, one
+     * vehicle). NULL means the general plan used by every other vehicle.
+     */
+    vehicleId: {
+      field: 'vehicle_id',
+      type: DataTypes.INTEGER,
+      allowNull: true
     }
   },
   {
@@ -801,6 +912,23 @@ Response.belongsTo(User, {
   as: 'author'
 });
 
+// Herathge – a financing plan can belong to one vehicle
+Vehicle.hasMany(Finance, {
+  foreignKey: 'vehicleId',
+  as: 'financePlans'
+});
+
+Finance.belongsTo(Vehicle, {
+  foreignKey: 'vehicleId',
+  as: 'vehicle'
+});
+
+// Ahamed – who ended a session (the user or an Admin)
+Session.belongsTo(User, {
+  foreignKey: 'endedBy',
+  as: 'endedByUser'
+});
+
 /*
 |--------------------------------------------------------------------------
 | Customer Wishlists
@@ -866,6 +994,48 @@ TestDriveBooking.belongsTo(User, {
   as: 'assignedStaff'
 });
 
+import {
+  associateExtendedModels,
+  Complaint,
+  ComplaintMessage,
+  ComplaintStatusHistory,
+  Document,
+  EmailLog,
+  InboundEmail,
+  ActivityLog,
+  SavedReport,
+  ReplyTemplate,
+  FinanceApplication,
+  SessionEvent,
+  PasswordResetToken,
+  StaffLeave
+} from './extended.js';
+
+associateExtendedModels({
+  User,
+  Vehicle,
+  Enquiry,
+  TestDriveBooking,
+  Finance,
+  Session
+});
+
+export {
+  Complaint,
+  ComplaintMessage,
+  ComplaintStatusHistory,
+  Document,
+  EmailLog,
+  InboundEmail,
+  ActivityLog,
+  SavedReport,
+  ReplyTemplate,
+  FinanceApplication,
+  SessionEvent,
+  PasswordResetToken,
+  StaffLeave
+};
+
 /*
 |--------------------------------------------------------------------------
 | Exports
@@ -884,5 +1054,18 @@ export default {
   Content,
   Finance,
   Wishlist,
-  TestDriveBooking
+  TestDriveBooking,
+  Complaint,
+  ComplaintMessage,
+  ComplaintStatusHistory,
+  Document,
+  EmailLog,
+  InboundEmail,
+  ActivityLog,
+  SavedReport,
+  ReplyTemplate,
+  FinanceApplication,
+  SessionEvent,
+  PasswordResetToken,
+  StaffLeave
 };

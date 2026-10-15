@@ -1,3 +1,9 @@
+/*
+| VIVA-UI – H.F. Naaziq – Enquiries (CRUD 1) + Enquiry Responses (CRUD 2), customer side
+|   READ own enquiries and the replies that were SENT → GET /my/enquiries
+| API paths are relative to /api/v1 (services/api.js).
+*/
+
 import {
   ArrowRight,
   Inbox
@@ -10,6 +16,12 @@ import {
 import {
   useApi
 } from '../hooks/useApi';
+
+import StatusBadge
+  from '../components/ui/StatusBadge';
+
+import ProgressSteps
+  from '../components/ui/ProgressSteps';
 
 const formatDate = (value) => {
   if (!value) {
@@ -125,20 +137,42 @@ export default function MyEnquiries() {
                   </h2>
                 </div>
 
-                <span
-                  className={
-                    `enquiry-status enquiry-status--${enquiry.status
-                      .toLowerCase()
-                      .replaceAll(' ', '-')}`
-                  }
-                >
-                  {enquiry.status}
-                </span>
+                <StatusBadge
+                  kind="enquiry"
+                  status={enquiry.status}
+                />
               </div>
+
+              <ProgressSteps
+                kind="enquiry"
+                status={enquiry.status}
+                compact
+              />
 
               <p className="customer-enquiry-message">
                 {enquiry.message}
               </p>
+
+              {/* VIVA – Naaziq – Enquiry Responses: customer READ (sent replies only) */}
+              {enquiry.responses?.length > 0 && (
+                <div className="customer-enquiry-replies">
+                  <h3>Replies from High Street</h3>
+
+                  {enquiry.responses.map((response) => (
+                    <article
+                      className="customer-enquiry-reply"
+                      key={response.responseId}
+                    >
+                      <header>
+                        <strong>{response.subject}</strong>
+                        <time>{formatDate(response.sentAt)}</time>
+                      </header>
+
+                      <p>{response.responseBody}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
 
               <dl className="customer-enquiry-meta">
                 <div>
@@ -183,6 +217,13 @@ export default function MyEnquiries() {
                   <ArrowRight />
                 </Link>
               )}
+
+              <Link
+                className="customer-enquiry-link customer-enquiry-link--muted"
+                to={`/my-complaints?new=1&category=Enquiry%20Handling&enquiryId=${enquiry.enquiryId}`}
+              >
+                Not happy with how this was handled?
+              </Link>
 
               {!enquiry.vehicle && (
                 <p className="vehicle-unlisted-note">

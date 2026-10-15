@@ -45,6 +45,33 @@ import * as profileController
 import * as wishlistController
   from '../controllers/wishlist.controller.js';
 
+import * as complaintController
+  from '../controllers/complaint.controller.js';
+
+import * as documentController
+  from '../controllers/document.controller.js';
+
+import * as reportController
+  from '../controllers/report.controller.js';
+
+import * as dashboardController
+  from '../controllers/dashboard.controller.js';
+
+import * as emailController
+  from '../controllers/email.controller.js';
+
+// VIVA – Naaziq – Reply Templates (CRUD resource 4)
+import * as replyTemplateController
+  from '../controllers/replyTemplate.controller.js';
+
+// VIVA – Herathge – Finance Applications (CRUD resource 3)
+import * as financeApplicationController
+  from '../controllers/financeApplication.controller.js';
+
+import {
+  MAX_DOCUMENT_BYTES
+} from '../services/file.service.js';
+
 import {
   loginSchema,
   registerSchema,
@@ -62,10 +89,81 @@ import {
   staffPermissionSchema,
   bookingCreateSchema,
   bookingUpdateSchema,
-  bookingAssignmentSchema
+  bookingAssignmentSchema,
+  bookingRescheduleSchema,
+  complaintCreateSchema,
+  complaintMessageSchema,
+  complaintReopenSchema,
+  complaintUpdateSchema,
+  complaintAssignSchema,
+  documentUpdateSchema,
+  savedReportSchema,
+  wishlistNoteSchema,
+  staffPermissionCreateSchema,
+  replyTemplateSchema,
+  financeApplicationCreateSchema,
+  financeApplicationCustomerUpdateSchema,
+  financeApplicationReviewSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  bulkUsersSchema,
+  bulkDeleteStaffSchema,
+  staffLeaveSchema
 } from '../validators/schemas.js';
 
 const router = Router();
+
+/*
+ * Every ":id"-style URL parameter must be a positive whole number.
+ * Anything else (e.g. "/enquiries/undefined") gets a clean 404 instead of
+ * reaching the database and causing a server error.
+ */
+for (const name of ['id', 'vehicleId', 'enquiryId']) {
+  router.param(name, (req, res, next, value) => {
+    if (!/^[1-9][0-9]{0,9}$/.test(String(value))) {
+      return res.status(404).json({ success: false, message: 'Record not found', errors: [] });
+    }
+
+    return next();
+  });
+}
+
+/*
+ * Private document uploads are held in memory (max MAX_DOCUMENT_BYTES),
+ * validated by content and only then written to private storage.
+ */
+const documentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_DOCUMENT_BYTES,
+    files: 1,
+    fields: 10
+  }
+});
+
+const markDocumentUpload = (req, res, next) => {
+  req.uploadKind = 'document';
+  next();
+};
+
+const complaintLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 6,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many complaints submitted. Please try again later.',
+    errors: []
+  }
+});
+
+const inboundLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 const wrap = (controller) => {
   return asyncHandler(controller);
@@ -87,6 +185,21 @@ const loginLimit = rateLimit({
     success: false,
     message:
       'Too many attempts. Please try again later.',
+    errors: []
+  }
+});
+
+// VIVA – Ahamed – "Forgot password?" requests per client.
+const passwordResetLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  message: {
+    success: false,
+    message:
+      'Too many password reset requests. Please try again later.',
     errors: []
   }
 });
@@ -158,8 +271,13 @@ const upload = multer({
       )
     ) {
       return callback(
-        new Error(
-          'Only JPEG, PNG and WebP images are allowed'
+        Object.assign(
+          new Error(
+            'Only JPEG, PNG and WebP images are allowed'
+          ),
+          {
+            status: 415
+          }
         )
       );
     }
@@ -222,6 +340,21 @@ router.put(
   wrap(profileController.changePassword)
 );
 
+// VIVA – Ahamed – Forgot password: the account owner resets it by email
+router.post(
+  '/auth/forgot-password',
+  passwordResetLimit,
+  validate(forgotPasswordSchema),
+  wrap(authController.forgotPassword)
+);
+
+router.post(
+  '/auth/reset-password',
+  passwordResetLimit,
+  validate(resetPasswordSchema),
+  wrap(authController.resetPassword)
+);
+
 /*
 |--------------------------------------------------------------------------
 | Public Vehicle Routes
@@ -282,6 +415,17 @@ router.delete(
   )
 );
 
+// VIVA – Amri – Wishlists: UPDATE (edit the private note)
+router.patch(
+  '/wishlist/:vehicleId',
+  auth,
+  customerOnly,
+  validate(wishlistNoteSchema),
+  wrap(
+    wishlistController.updateWishlistNote
+  )
+);
+
 /*
 |--------------------------------------------------------------------------
 | Vehicle Management Routes
@@ -332,6 +476,16 @@ router.delete(
     'canArchiveRecords'
   ),
   wrap(vehicleController.remove)
+);
+
+router.patch(
+  '/vehicles/:id/restore',
+  auth,
+  staffOrAdmin,
+  requirePermission(
+    'canArchiveRecords'
+  ),
+  wrap(vehicleController.restore)
 );
 
 /*
@@ -457,6 +611,18 @@ router.get(
   ),
   wrap(
     enquiryController.getEnquiry
+  )
+);
+
+router.get(
+  '/enquiries/:id/inbound',
+  auth,
+  staffOrAdmin,
+  requirePermission(
+    'canManageEnquiries'
+  ),
+  wrap(
+    enquiryController.listEnquiryInbound
   )
 );
 
@@ -618,6 +784,18 @@ router.patch(
   )
 );
 
+router.patch(
+  '/my/bookings/:id',
+  auth,
+  customerOnly,
+  validate(
+    bookingRescheduleSchema
+  ),
+  wrap(
+    bookingController.rescheduleMyBooking
+  )
+);
+
 /*
 |--------------------------------------------------------------------------
 | Admin and Staff Test-Drive Management
@@ -629,7 +807,7 @@ router.get(
   auth,
   staffOrAdmin,
   requirePermission(
-    'canManageEnquiries'
+    'canManageBookings'
   ),
   requirePermission(
     'canViewAssignedContacts'
@@ -639,12 +817,49 @@ router.get(
   )
 );
 
+// VIVA – Amri – staff availability for the "Assigned staff" drop-down
+router.get(
+  '/bookings/staff-availability',
+  auth,
+  adminOnly,
+  wrap(bookingController.bookingStaffAvailability)
+);
+
+router.get(
+  '/staff-availability',
+  auth,
+  adminOnly,
+  wrap(bookingController.staffDayAvailability)
+);
+
+router.get(
+  '/staff-leave',
+  auth,
+  adminOnly,
+  wrap(bookingController.listStaffLeave)
+);
+
+router.post(
+  '/staff-leave',
+  auth,
+  adminOnly,
+  validate(staffLeaveSchema),
+  wrap(bookingController.createStaffLeave)
+);
+
+router.delete(
+  '/staff-leave/:id',
+  auth,
+  adminOnly,
+  wrap(bookingController.deleteStaffLeave)
+);
+
 router.get(
   '/bookings/:id',
   auth,
   staffOrAdmin,
   requirePermission(
-    'canManageEnquiries'
+    'canManageBookings'
   ),
   requirePermission(
     'canViewAssignedContacts'
@@ -659,7 +874,7 @@ router.patch(
   auth,
   staffOrAdmin,
   requirePermission(
-    'canManageEnquiries'
+    'canManageBookings'
   ),
   validate(
     bookingUpdateSchema
@@ -733,6 +948,53 @@ router.patch(
   wrap(domainController.userStatus)
 );
 
+// VIVA – Ahamed – Users: detail panel, unlock, bulk activate/deactivate
+router.get(
+  '/users/:id/overview',
+  auth,
+  adminOnly,
+  wrap(domainController.userOverview)
+);
+
+router.patch(
+  '/users/:id/unlock',
+  auth,
+  adminOnly,
+  wrap(domainController.unlockUser)
+);
+
+router.post(
+  '/users/bulk',
+  auth,
+  adminOnly,
+  validate(bulkUsersSchema),
+  wrap(domainController.bulkUsers)
+);
+
+// VIVA – Ahamed – "Delete staff": permanent delete, one or several (Staff only)
+router.post(
+  '/users/bulk-delete',
+  auth,
+  adminOnly,
+  validate(bulkDeleteStaffSchema),
+  wrap(domainController.bulkDeleteStaff)
+);
+
+router.delete(
+  '/users/:id/permanent',
+  auth,
+  adminOnly,
+  wrap(domainController.deleteStaffPermanently)
+);
+
+// VIVA – Ahamed – every Staff member with their permissions (filters, matrix)
+router.get(
+  '/staff-permissions',
+  auth,
+  adminOnly,
+  wrap(permissionController.listStaffPermissions)
+);
+
 router.delete(
   '/users/:id',
   auth,
@@ -767,6 +1029,31 @@ router.put(
   )
 );
 
+// VIVA – Ahamed – Staff Permissions: CREATE
+router.post(
+  '/users/:id/permissions',
+  auth,
+  adminOnly,
+  validate(staffPermissionCreateSchema),
+  wrap(permissionController.createPermissions)
+);
+
+// VIVA – Ahamed – Staff Permissions: "Reset" (every permission back to no access)
+router.patch(
+  '/users/:id/permissions/reset',
+  auth,
+  adminOnly,
+  wrap(permissionController.resetPermissions)
+);
+
+// VIVA – Ahamed – Staff Permissions: DELETE ("Remove all access")
+router.delete(
+  '/users/:id/permissions',
+  auth,
+  adminOnly,
+  wrap(permissionController.deletePermissions)
+);
+
 /*
 |--------------------------------------------------------------------------
 | Session Routes
@@ -784,6 +1071,21 @@ router.get(
 router.post(
   '/sessions/refresh',
   wrap(authController.refresh)
+);
+
+// VIVA – Ahamed – login history incl. failed attempts (Admin)
+router.get(
+  '/sessions/login-history',
+  auth,
+  adminOnly,
+  wrap(domainController.loginHistory)
+);
+
+// VIVA – Ahamed – "Check activity" for one session
+router.get(
+  '/sessions/:id/activity',
+  auth,
+  wrap(domainController.sessionActivity)
 );
 
 router.delete(
@@ -904,17 +1206,19 @@ router.get(
   asyncHandler(
     async (req, res) => {
       const {
-        Finance
+        activePlanFor
       } = await import(
-        '../models/index.js'
+        '../services/finance.service.js'
       );
 
+      /*
+       * VIVA – Herathge – ?vehicleId= returns that vehicle's own active
+       * plan when it has one, otherwise the general active plan.
+       */
       const configuration =
-        await Finance.findOne({
-          where: {
-            isActive: true
-          }
-        });
+        await activePlanFor(
+          req.query.vehicleId
+        );
 
       if (!configuration) {
         return res
@@ -935,7 +1239,11 @@ router.get(
         message:
           'Active financing configuration retrieved',
 
-        data: configuration,
+        data: {
+          ...configuration.toJSON(),
+          vehicleSpecific:
+            configuration.vehicleId !== null
+        },
         meta: {}
       });
     }
@@ -953,7 +1261,7 @@ router.get(
   auth,
   adminOnly,
   wrap(
-    domainController.finances.list
+    domainController.listFinance
   )
 );
 
@@ -985,5 +1293,350 @@ router.delete(
     domainController.deleteFinance
   )
 );
+
+
+/*
+|--------------------------------------------------------------------------
+| Complaints — Customer
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  '/complaints',
+  complaintLimit,
+  auth,
+  customerOnly,
+  validate(complaintCreateSchema),
+  wrap(complaintController.createComplaint)
+);
+
+router.get(
+  '/my/complaints',
+  auth,
+  customerOnly,
+  wrap(complaintController.listMyComplaints)
+);
+
+router.get(
+  '/my/complaints/:id',
+  auth,
+  customerOnly,
+  wrap(complaintController.getMyComplaint)
+);
+
+router.post(
+  '/my/complaints/:id/messages',
+  auth,
+  customerOnly,
+  validate(complaintMessageSchema),
+  wrap(complaintController.addMyMessage)
+);
+
+router.patch(
+  '/my/complaints/:id/reopen',
+  auth,
+  customerOnly,
+  validate(complaintReopenSchema),
+  wrap(complaintController.reopenMyComplaint)
+);
+
+router.patch(
+  '/my/complaints/:id/close',
+  auth,
+  customerOnly,
+  wrap(complaintController.closeMyComplaint)
+);
+
+/*
+|--------------------------------------------------------------------------
+| Complaints — Admin and permitted Staff
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  '/complaints',
+  auth,
+  staffOrAdmin,
+  requirePermission('canManageComplaints'),
+  wrap(complaintController.listComplaints)
+);
+
+router.get(
+  '/complaints/:id',
+  auth,
+  staffOrAdmin,
+  requirePermission('canManageComplaints'),
+  wrap(complaintController.getComplaint)
+);
+
+router.patch(
+  '/complaints/:id',
+  auth,
+  staffOrAdmin,
+  requirePermission('canManageComplaints'),
+  validate(complaintUpdateSchema),
+  wrap(complaintController.updateComplaint)
+);
+
+router.patch(
+  '/complaints/:id/assign',
+  auth,
+  adminOnly,
+  validate(complaintAssignSchema),
+  wrap(complaintController.assignComplaint)
+);
+
+router.post(
+  '/complaints/:id/messages',
+  auth,
+  staffOrAdmin,
+  requirePermission('canManageComplaints'),
+  validate(complaintMessageSchema),
+  wrap(complaintController.addComplaintMessage)
+);
+
+router.delete(
+  '/complaints/:id',
+  auth,
+  adminOnly,
+  wrap(complaintController.deleteComplaint)
+);
+
+/*
+|--------------------------------------------------------------------------
+| Private Documents
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  '/documents',
+  auth,
+  markDocumentUpload,
+  documentUpload.single('file'),
+  wrap(documentController.uploadDocument)
+);
+
+router.get(
+  '/documents',
+  auth,
+  wrap(documentController.listDocuments)
+);
+
+router.get(
+  '/documents/:id',
+  auth,
+  wrap(documentController.getDocument)
+);
+
+router.get(
+  '/documents/:id/download',
+  auth,
+  wrap(documentController.downloadDocument)
+);
+
+router.patch(
+  '/documents/:id',
+  auth,
+  validate(documentUpdateSchema),
+  wrap(documentController.updateDocument)
+);
+
+router.delete(
+  '/documents/:id',
+  auth,
+  wrap(documentController.deleteDocument)
+);
+
+/*
+|--------------------------------------------------------------------------
+| Reports
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  '/reports/types',
+  auth,
+  staffOrAdmin,
+  wrap(reportController.listTypes)
+);
+
+router.get(
+  '/reports/:type/export/:format',
+  auth,
+  staffOrAdmin,
+  wrap(reportController.exportReport)
+);
+
+router.get(
+  '/reports/:type',
+  auth,
+  staffOrAdmin,
+  wrap(reportController.runReport)
+);
+
+router.get(
+  '/saved-reports',
+  auth,
+  staffOrAdmin,
+  wrap(reportController.listSavedReports)
+);
+
+router.post(
+  '/saved-reports',
+  auth,
+  staffOrAdmin,
+  validate(savedReportSchema),
+  wrap(reportController.createSavedReport)
+);
+
+router.get(
+  '/saved-reports/:id/run',
+  auth,
+  staffOrAdmin,
+  wrap(reportController.runSavedReport)
+);
+
+router.put(
+  '/saved-reports/:id',
+  auth,
+  staffOrAdmin,
+  validate(savedReportSchema),
+  wrap(reportController.updateSavedReport)
+);
+
+router.delete(
+  '/saved-reports/:id',
+  auth,
+  staffOrAdmin,
+  wrap(reportController.deleteSavedReport)
+);
+
+/*
+|--------------------------------------------------------------------------
+| Dashboard overview and customer notifications
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  '/dashboard/summary',
+  auth,
+  staffOrAdmin,
+  wrap(dashboardController.summary)
+);
+
+router.get(
+  '/my/notifications',
+  auth,
+  customerOnly,
+  wrap(dashboardController.myNotifications)
+);
+
+/*
+|--------------------------------------------------------------------------
+| Email delivery (Admin) and inbound replies
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  '/emails',
+  auth,
+  adminOnly,
+  wrap(emailController.listEmails)
+);
+
+router.get(
+  '/emails/config',
+  auth,
+  adminOnly,
+  wrap(emailController.configuration)
+);
+
+router.post(
+  '/emails/verify',
+  auth,
+  adminOnly,
+  wrap(emailController.verify)
+);
+
+router.post(
+  '/emails/test',
+  auth,
+  adminOnly,
+  wrap(emailController.sendTest)
+);
+
+router.post(
+  '/emails/process',
+  auth,
+  adminOnly,
+  wrap(emailController.processQueueNow)
+);
+
+router.post(
+  '/emails/:id/retry',
+  auth,
+  adminOnly,
+  wrap(emailController.retry)
+);
+
+router.get(
+  '/inbound-emails',
+  auth,
+  adminOnly,
+  wrap(emailController.listInbound)
+);
+
+router.post(
+  '/inbound/email',
+  inboundLimit,
+  multer({ limits: { fieldSize: 1024 * 1024, files: 0 } }).none(),
+  wrap(emailController.receiveInbound)
+);
+
+/*
+|--------------------------------------------------------------------------
+| VIVA – Naaziq – Reply Templates (CRUD resource 4)
+|--------------------------------------------------------------------------
+| Admin, or Staff with "Manage enquiries" / "Manage complaints".
+| The controller checks the permission and ownership.
+*/
+
+router.get('/reply-templates', auth, staffOrAdmin, wrap(replyTemplateController.listTemplates));
+router.get('/reply-templates/:id', auth, staffOrAdmin, wrap(replyTemplateController.getTemplate));
+router.post('/reply-templates', auth, staffOrAdmin, validate(replyTemplateSchema), wrap(replyTemplateController.createTemplate));
+router.put('/reply-templates/:id', auth, staffOrAdmin, validate(replyTemplateSchema), wrap(replyTemplateController.updateTemplate));
+router.delete('/reply-templates/:id', auth, staffOrAdmin, wrap(replyTemplateController.deleteTemplate));
+
+/*
+|--------------------------------------------------------------------------
+| VIVA – Herathge – Finance Applications (CRUD resource 3)
+|--------------------------------------------------------------------------
+*/
+
+const financeApplicationLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many finance applications submitted. Please try again later.',
+    errors: []
+  }
+});
+
+// Customer: CREATE / READ / UPDATE / DELETE their own applications
+router.post('/finance-applications', auth, customerOnly, financeApplicationLimit, validate(financeApplicationCreateSchema), wrap(financeApplicationController.createApplication));
+router.get('/my/finance-applications', auth, customerOnly, wrap(financeApplicationController.listMyApplications));
+router.get('/my/finance-applications/:id', auth, customerOnly, wrap(financeApplicationController.getMyApplication));
+router.put('/my/finance-applications/:id', auth, customerOnly, validate(financeApplicationCustomerUpdateSchema), wrap(financeApplicationController.updateMyApplication));
+router.patch('/my/finance-applications/:id/withdraw', auth, customerOnly, wrap(financeApplicationController.withdrawMyApplication));
+router.delete('/my/finance-applications/:id', auth, customerOnly, wrap(financeApplicationController.deleteMyApplication));
+
+// Admin: READ / UPDATE (review) / DELETE every application
+router.get('/finance-applications', auth, adminOnly, wrap(financeApplicationController.listApplications));
+router.get('/finance-applications/:id', auth, adminOnly, wrap(financeApplicationController.getApplication));
+router.patch('/finance-applications/:id', auth, adminOnly, validate(financeApplicationReviewSchema), wrap(financeApplicationController.reviewApplication));
+router.delete('/finance-applications/:id', auth, adminOnly, wrap(financeApplicationController.deleteApplication));
 
 export default router;

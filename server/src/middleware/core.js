@@ -167,6 +167,35 @@ export const auth = asyncHandler(
       });
     }
 
+    /*
+     * VIVA – Ahamed – "Check activity": remember when the session was last
+     * used (written at most once a minute to keep database writes low).
+     */
+    const lastSeen = session.lastSeenAt ? new Date(session.lastSeenAt).getTime() : 0;
+
+    if (Date.now() - lastSeen > 60 * 1000) {
+      await session.update({ lastSeenAt: new Date() }).catch(() => {});
+    }
+
+    /*
+     * VIVA – Ahamed – an Admin-set temporary password must be changed by
+     * the user before anything else can be done with the account.
+     */
+    if (user.mustChangePassword) {
+      const path = String(req.originalUrl || '').split('?')[0].replace(/^\/api\/v1/, '');
+      const allowed = ['/auth/me', '/auth/change-password', '/auth/logout', '/my/notifications'];
+
+      if (!allowed.includes(path)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            'Please change your temporary password before continuing.',
+          code: 'PASSWORD_CHANGE_REQUIRED',
+          errors: []
+        });
+      }
+    }
+
     req.user = user;
     req.session = session;
     req.sessionId = session.sessionId;
@@ -360,10 +389,23 @@ export const errors = (
 
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        success: false,
+        message:
+          req.uploadKind === 'document'
+            ? `Documents must be ${Math.round(Number(process.env.MAX_DOCUMENT_MB || 8))} MB or smaller`
+            : 'Each image must be 5 MB or smaller',
+        errors: []
+      });
+    }
+
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
       return res.status(422).json({
         success: false,
         message:
-          'Each image must be 5 MB or smaller',
+          req.uploadKind === 'document'
+            ? 'Upload one file at a time using the "file" field'
+            : 'Unexpected file field',
         errors: []
       });
     }
@@ -372,7 +414,9 @@ export const errors = (
       return res.status(422).json({
         success: false,
         message:
-          'A maximum of 10 images can be uploaded at once',
+          req.uploadKind === 'document'
+            ? 'Upload one document at a time'
+            : 'A maximum of 10 images can be uploaded at once',
         errors: []
       });
     }
@@ -408,7 +452,23 @@ export const errors = (
     });
   }
 
-  const status = error.status || 500;
+  if (error.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      success: false,
+      message: 'The request body is not valid JSON',
+      errors: []
+    });
+  }
+
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({
+      success: false,
+      message: 'The request is too large',
+      errors: []
+    });
+  }
+
+  const status = error.status || error.statusCode || 500;
 
   return res.status(status).json({
     success: false,
@@ -417,6 +477,11 @@ export const errors = (
       status === 500
         ? 'Unexpected server error'
         : error.message,
+
+    // Machine-readable reason for some 4xx answers (e.g. ACCOUNT_LOCKED).
+    ...(status < 500 && typeof error.code === 'string' && /^[A-Z_]+$/.test(error.code)
+      ? { code: error.code, ...(error.lockedUntil ? { lockedUntil: error.lockedUntil } : {}) }
+      : {}),
 
     errors: []
   });

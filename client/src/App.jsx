@@ -27,6 +27,11 @@ import Login
 
 import Register
   from './pages/Register';
+// VIVA – Ahamed – Forgot password / reset password (account owner only)
+import ForgotPassword
+  from './pages/ForgotPassword';
+import ResetPassword
+  from './pages/ResetPassword';
 
 import MyEnquiries
   from './pages/MyEnquiries';
@@ -48,6 +53,26 @@ import ProtectedRoute
 
 import MyBookings
   from './pages/MyBookings';
+
+import MyComplaints
+  from './pages/MyComplaints';
+
+import ComplaintDetail
+  from './pages/ComplaintDetail';
+
+import MyDocuments
+  from './pages/MyDocuments';
+
+// VIVA – Herathge – Finance Applications (customer page)
+import MyFinanceApplications
+  from './pages/MyFinanceApplications';
+
+// Home page tiles: "Plan the finance" and "Book a test drive"
+import FinancePlanner
+  from './pages/FinancePlanner';
+
+import BookTestDrive
+  from './pages/BookTestDrive';
 
 export default function App() {
   return (
@@ -104,6 +129,16 @@ export default function App() {
         />
 
         <Route
+          path="finance"
+          element={<FinancePlanner />}
+        />
+
+        <Route
+          path="book-test-drive"
+          element={<BookTestDrive />}
+        />
+
+        <Route
           path="my-enquiries"
           element={
             <ProtectedRoute
@@ -137,6 +172,50 @@ export default function App() {
         />
 
         <Route
+          path="my-complaints"
+          element={
+            <ProtectedRoute
+              allowedRoles={['Customer']}
+            >
+              <MyComplaints />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="my-complaints/:id"
+          element={
+            <ProtectedRoute
+              allowedRoles={['Customer']}
+            >
+              <ComplaintDetail />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="my-documents"
+          element={
+            <ProtectedRoute
+              allowedRoles={['Customer']}
+            >
+              <MyDocuments />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="my-finance"
+          element={
+            <ProtectedRoute
+              allowedRoles={['Customer']}
+            >
+              <MyFinanceApplications />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
           path="profile"
           element={
             <ProtectedRoute
@@ -165,6 +244,14 @@ export default function App() {
       <Route
         path="/register"
         element={<Register />}
+      />
+      <Route
+        path="/forgot-password"
+        element={<ForgotPassword />}
+      />
+      <Route
+        path="/reset-password"
+        element={<ResetPassword />}
       />
 
       <Route

@@ -1,806 +1,386 @@
-import {
-  useEffect,
-  useState
-} from 'react';
+/*
+| VIVA-UI – M.R. Ahamed – Admin Dashboard shell
+|   Tabs per role/permission, badges, deep links (?tab=), 60-second live summary (GET /dashboard/summary)
+| API paths are relative to /api/v1 (services/api.js).
+*/
 
-import {
-  useNavigate
-} from 'react-router-dom';
-
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BadgeDollarSign,
+  BarChart3,
   CalendarDays,
   Car,
   FileText,
+  FolderLock,
+  Gauge,
   Image,
   Inbox,
+  Landmark,
   LogOut,
+  Mail,
   Menu,
+  MessageSquareText,
+  MessageSquareWarning,
   Monitor,
   ShieldCheck,
   Store,
-  Users
+  Users,
+  X
 } from 'lucide-react';
-
 import toast from 'react-hot-toast';
 
-import {
-  api
-} from '../services/api';
+import { api, errorMessage } from '../services/api';
+import { useAuth } from '../features/auth/AuthContext';
+import BookingManager from '../components/BookingManager';
+import ContentManager from '../components/ContentManager';
+import EnquiryManager from '../components/EnquiryManager';
+import FinanceManager from '../components/FinanceManager';
+import SessionManager from '../components/SessionManager';
+import StaffPermissionManager from '../components/StaffPermissionManager';
+import UserManager from '../components/UserManager';
+import VehicleImageManager from '../components/VehicleImageManager';
+import VehicleManager from '../components/VehicleManager';
+import OverviewDashboard from '../components/admin/OverviewDashboard';
+import ComplaintManager from '../components/admin/ComplaintManager';
+import DocumentManager from '../components/admin/DocumentManager';
+import ReportCenter from '../components/admin/ReportCenter';
+import EmailCenter from '../components/admin/EmailCenter';
+// VIVA – 16-CRUD completion: Naaziq's Reply Templates, Herathge's Finance Applications
+import ReplyTemplateManager from '../components/admin/ReplyTemplateManager';
+import FinanceApplicationManager from '../components/admin/FinanceApplicationManager';
 
-import {
-  useAuth
-} from '../features/auth/AuthContext';
+/*
+|--------------------------------------------------------------------------
+| Operations dashboard
+|--------------------------------------------------------------------------
+|
+| Tabs are shown according to the signed-in role and Staff permissions.
+| The same rules are enforced by the API; hiding a tab here is only for
+| convenience. The live summary refreshes every minute and raises a popup
+| when new enquiries, test-drive requests or complaints arrive.
+|
+*/
 
-import BookingManager
-  from '../components/BookingManager';
+const POLL_MS = 60000;
 
-import ContentManager
-  from '../components/ContentManager';
-
-import EnquiryManager
-  from '../components/EnquiryManager';
-
-import FinanceManager
-  from '../components/FinanceManager';
-
-import SessionManager
-  from '../components/SessionManager';
-
-import StaffPermissionManager
-  from '../components/StaffPermissionManager';
-
-import UserManager
-  from '../components/UserManager';
-
-import VehicleImageManager
-  from '../components/VehicleImageManager';
-
-import VehicleManager
-  from '../components/VehicleManager';
-
-const resources = {
-  Vehicles: {
-    icon: Car,
-    path: '/vehicles',
-    fields: {},
-    custom: true
-  },
-
-  Images: {
-    icon: Image,
-    path: '/vehicles/1/images',
-    fields: {},
-    custom: true
-  },
-
-  Enquiries: {
+const TABS = [
+  { name: 'Overview', group: 'Operations', icon: Gauge, component: null },
+  { name: 'Vehicles', group: 'Operations', icon: Car, component: VehicleManager, can: (p) => p.canManageInventory },
+  { name: 'Images', group: 'Operations', icon: Image, component: VehicleImageManager, can: (p) => p.canManageInventory },
+  {
+    name: 'Enquiries',
+    group: 'Customers',
     icon: Inbox,
-    path: '/enquiries',
-    fields: {},
-    custom: true
+    component: EnquiryManager,
+    can: (p) => p.canManageEnquiries && p.canViewAssignedContacts,
+    badge: 'newEnquiries'
   },
-
-  Bookings: {
+  {
+    name: 'Bookings',
+    group: 'Customers',
     icon: CalendarDays,
-    path: '/bookings',
-    fields: {},
-    custom: true
+    component: BookingManager,
+    // VIVA – Ahamed – test drives have their own permission since October 2026
+    can: (p) => p.canManageBookings && p.canViewAssignedContacts,
+    badge: 'pendingBookings'
   },
-
-  Users: {
-    icon: Users,
-    path: '/users',
-    fields: {},
-    custom: true
+  {
+    name: 'Complaints',
+    group: 'Customers',
+    icon: MessageSquareWarning,
+    component: ComplaintManager,
+    can: (p) => p.canManageComplaints,
+    badge: 'openComplaints',
+    urgent: 'urgentComplaints'
   },
-
-  Permissions: {
-    icon: ShieldCheck,
-    path: '/users',
-    fields: {},
-    custom: true
+  {
+    name: 'Reply templates',
+    group: 'Customers',
+    icon: MessageSquareText,
+    component: ReplyTemplateManager,
+    can: (p) => p.canManageEnquiries || p.canManageComplaints
   },
-
-  Sessions: {
-    icon: Monitor,
-    path: '/sessions',
-    fields: {},
-    custom: true
+  {
+    name: 'Documents',
+    group: 'Customers',
+    icon: FolderLock,
+    component: DocumentManager,
+    can: (p) => p.canManageInventory || p.canManageEnquiries || p.canManageBookings || p.canManageComplaints
   },
-
-  Content: {
-    icon: FileText,
-    path: '/content',
-    fields: {},
-    custom: true
+  { name: 'Reports', group: 'Insights', icon: BarChart3, component: ReportCenter, can: (p) => p.canViewLimitedAnalytics },
+  { name: 'Users', group: 'Administration', icon: Users, component: UserManager, adminOnly: true },
+  { name: 'Permissions', group: 'Administration', icon: ShieldCheck, component: StaffPermissionManager, adminOnly: true },
+  { name: 'Sessions', group: 'Administration', icon: Monitor, component: SessionManager },
+  { name: 'Content', group: 'Administration', icon: FileText, component: ContentManager, adminOnly: true },
+  { name: 'Financing', group: 'Administration', icon: BadgeDollarSign, component: FinanceManager, adminOnly: true },
+  {
+    name: 'Finance applications',
+    group: 'Administration',
+    icon: Landmark,
+    component: FinanceApplicationManager,
+    adminOnly: true,
+    badge: 'awaitingFinance'
   },
+  { name: 'Emails', group: 'Administration', icon: Mail, component: EmailCenter, adminOnly: true, badge: 'failedEmails', urgent: 'failedEmails' }
+];
 
-  Financing: {
-    icon: BadgeDollarSign,
-    path: '/financing-config',
-    fields: {},
-    custom: true
-  }
-};
+const ATTENTION = [
+  ['newEnquiries', 'new enquiry', 'new enquiries', 'Enquiries', Inbox],
+  ['pendingBookings', 'test-drive request', 'test-drive requests', 'Bookings', CalendarDays],
+  ['openComplaints', 'open complaint', 'open complaints', 'Complaints', MessageSquareWarning],
+  ['failedEmails', 'failed email', 'failed emails', 'Emails', Mail],
+  ['awaitingFinance', 'finance application to review', 'finance applications to review', 'Finance applications', Landmark]
+];
 
-function getVisibleResources(user) {
+function visibleTabs(user) {
   if (user?.role === 'Admin') {
-    return resources;
+    return TABS;
   }
 
   if (user?.role !== 'Staff') {
-    return {};
+    return [];
   }
 
-  const visible = {};
+  const permissions = user.permissions || {};
 
-  const permissions =
-    user.permissions || {};
-
-  if (
-    permissions.canManageInventory
-  ) {
-    visible.Vehicles =
-      resources.Vehicles;
-
-    visible.Images =
-      resources.Images;
-  }
-
-  if (
-    permissions.canManageEnquiries &&
-    permissions.canViewAssignedContacts
-  ) {
-    visible.Enquiries =
-      resources.Enquiries;
-
-    visible.Bookings =
-      resources.Bookings;
-  }
-
-  visible.Sessions =
-    resources.Sessions;
-
-  return visible;
-}
-
-function recordId(
-  resourceName,
-  record
-) {
-  const idFields = {
-    Financing: 'configId'
-  };
-
-  return record[
-    idFields[resourceName]
-  ];
+  return TABS.filter((tab) => !tab.adminOnly && (!tab.can || tab.can(permissions)));
 }
 
 export default function Admin() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { user, logout: logoutUser, refreshUser } = useAuth();
+  const tabs = useMemo(() => visibleTabs(user), [user]);
+  const requested = searchParams.get('tab');
+  const tab = tabs.find((entry) => entry.name === requested) || tabs[0];
+  const [open, setOpen] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState(null);
+  const [online, setOnline] = useState(true);
+  const previous = useRef(null);
 
-  const {
-    user,
-    logout: logoutUser
-  } = useAuth();
-
-  const visibleResources =
-    getVisibleResources(user);
-
-  const firstVisibleTab =
-    Object.keys(
-      visibleResources
-    )[0] || 'Sessions';
-
-  const [
-    tab,
-    setTab
-  ] = useState(
-    firstVisibleTab
+  const setTab = useCallback(
+    (name) => {
+      setSearchParams(name === 'Overview' ? {} : { tab: name });
+      setOpen(false);
+    },
+    [setSearchParams]
   );
 
-  const [
-    rows,
-    setRows
-  ] = useState([]);
-
-  const [
-    form,
-    setForm
-  ] = useState(
-    resources[
-      firstVisibleTab
-    ]?.fields || {}
-  );
-
-  const [
-    editing,
-    setEditing
-  ] = useState(null);
-
-  const [
-    busy,
-    setBusy
-  ] = useState(false);
-
-  const [
-    open,
-    setOpen
-  ] = useState(false);
-
-  const config =
-    resources[tab] ||
-    resources.Sessions;
-
-  const customTabs = [
-    'Vehicles',
-    'Images',
-    'Enquiries',
-    'Bookings',
-    'Users',
-    'Permissions',
-    'Sessions',
-    'Content',
-    'Financing'
-  ];
-
-  const load = async () => {
-    if (
-      !visibleResources[tab] ||
-      config.custom
-    ) {
-      setRows([]);
-      setBusy(false);
-      return;
-    }
-
-    setBusy(true);
-
-    try {
-      const response =
-        await api.get(
-          config.path
-        );
-
-      const data =
-        response.data.data;
-
-      setRows(
-        Array.isArray(data)
-          ? data
-          : data?.rows || []
-      );
-    } catch (error) {
-      if (
-        error.response?.status ===
-        401
-      ) {
-        navigate('/login');
-      } else {
-        toast.error(
-          error.response?.data
-            ?.message ||
-            'Could not load data'
-        );
+  const loadSummary = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) {
+        setSummaryLoading(true);
       }
-    } finally {
-      setBusy(false);
-    }
-  };
+
+      try {
+        const response = await api.get('/dashboard/summary');
+        const data = response.data.data;
+        const attention = data.attention || {};
+
+        // Popup when new work arrives between polls.
+        if (previous.current) {
+          for (const [key, singular, plural, target, Icon] of ATTENTION) {
+            const increase = (attention[key] || 0) - (previous.current[key] || 0);
+
+            if (increase > 0 && tabs.some((entry) => entry.name === target)) {
+              toast(
+                (t) => (
+                  <button
+                    type="button"
+                    className="toast-notification"
+                    onClick={() => {
+                      toast.dismiss(t.id);
+                      setTab(target);
+                    }}
+                  >
+                    <Icon aria-hidden="true" />
+                    <span>
+                      <strong>
+                        {increase} {increase === 1 ? singular : plural}
+                      </strong>
+                      <small>Open {target}</small>
+                    </span>
+                  </button>
+                ),
+                { id: `attention-${key}-${attention[key]}`, duration: 8000 }
+              );
+            }
+          }
+        }
+
+        previous.current = attention;
+        setSummary(data);
+        setSummaryError(null);
+        setOnline(true);
+      } catch (error) {
+        setSummaryError(errorMessage(error, 'Could not load the dashboard summary'));
+        setOnline(error.response ? true : false);
+      } finally {
+        setSummaryLoading(false);
+      }
+    },
+    [tabs, setTab]
+  );
 
   useEffect(() => {
-    if (
-      !visibleResources[tab]
-    ) {
-      setTab(firstVisibleTab);
-      return;
+    // Permissions may have changed since the last sign-in.
+    refreshUser?.().catch(() => {});
+  }, [refreshUser]);
+
+  useEffect(() => {
+    loadSummary();
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadSummary({ silent: true });
+      }
+    }, POLL_MS);
+
+    return () => clearInterval(timer);
+  }, [loadSummary]);
+
+  // Refresh the badges after switching sections (records may have changed).
+  useEffect(() => {
+    if (summary) {
+      loadSummary({ silent: true });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab?.name]);
 
-    setForm(config.fields);
-    setEditing(null);
-    load();
-  }, [tab, user]);
-
-  const save = async (
-    event
-  ) => {
-    event.preventDefault();
-
-    try {
-      const requestPath =
-        editing
-          ? `${config.path}/${editing}`
-          : config.path;
-
-      await api[
-        editing ? 'put' : 'post'
-      ](
-        requestPath,
-        form
-      );
-
-      toast.success(
-        `${tab} saved`
-      );
-
-      setEditing(null);
-      setForm(config.fields);
-
-      await load();
-    } catch (error) {
-      toast.error(
-        error.response?.data
-          ?.message ||
-          'Save failed'
-      );
-    }
-  };
-
-  const edit = (record) => {
-    setEditing(
-      recordId(
-        tab,
-        record
-      )
+  if (!tab) {
+    return (
+      <main className="route-loading">
+        <p>Your account does not have access to any dashboard sections yet. Ask an Admin to assign permissions.</p>
+        <button type="button" className="button" onClick={() => navigate('/')}>
+          Back to the store
+        </button>
+      </main>
     );
+  }
 
-    setForm(
-      Object.fromEntries(
-        Object.keys(
-          config.fields
-        ).map(
-          (fieldName) => [
-            fieldName,
-
-            record[fieldName] ??
-              config.fields[
-                fieldName
-              ]
-          ]
-        )
-      )
-    );
+  const handleLogout = async () => {
+    await logoutUser();
+    navigate('/');
   };
 
-  const remove = async (
-    record
-  ) => {
-    const confirmed =
-      window.confirm(
-        `Delete this ${tab.toLowerCase()} record?`
-      );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await api.delete(
-        `${config.path}/${recordId(
-          tab,
-          record
-        )}`
-      );
-
-      toast.success(
-        'Record deleted'
-      );
-
-      await load();
-    } catch (error) {
-      toast.error(
-        error.response?.data
-          ?.message ||
-          'Action failed'
-      );
-    }
-  };
-
-  const handleLogout =
-    async () => {
-      await logoutUser();
-      navigate('/');
-    };
+  const attention = summary?.attention || {};
+  const groups = [...new Set(tabs.map((entry) => entry.group))];
+  const ActiveComponent = tab.component;
+  const can = (name) => tabs.some((entry) => entry.name === name);
 
   return (
     <div className="admin">
-      <aside
-        className={
-          open ? 'open' : ''
-        }
-      >
+      <aside className={open ? 'open' : ''} aria-label="Dashboard navigation">
         <div className="admin-logo">
           HS <span>CONTROL</span>
         </div>
 
-        <button
-          type="button"
-          className="store-switch"
-          onClick={() => {
-            navigate('/');
-          }}
-        >
+        <button type="button" className="store-switch" onClick={() => navigate('/')}>
           <Store />
           View Store
         </button>
 
-        {Object.entries(
-          visibleResources
-        ).map(
-          ([
-            name,
-            {
-              icon: Icon
-            }
-          ]) => (
-            <button
-              type="button"
-              className={
-                tab === name
-                  ? 'active'
-                  : ''
-              }
-              onClick={() => {
-                setTab(name);
-                setOpen(false);
-              }}
-              key={name}
-            >
-              <Icon />
-              {name}
-            </button>
-          )
-        )}
+        {groups.map((group) => (
+          <div className="admin-nav-group" key={group}>
+            <p>{group}</p>
+            {tabs
+              .filter((entry) => entry.group === group)
+              .map(({ name, icon: Icon, badge, urgent }) => {
+                const count = badge ? attention[badge] || 0 : 0;
+                const isUrgent = urgent && (attention[urgent] || 0) > 0;
 
-        <button
-          type="button"
-          onClick={
-            handleLogout
-          }
-        >
+                return (
+                  <button
+                    type="button"
+                    className={tab.name === name ? 'active' : ''}
+                    aria-current={tab.name === name ? 'page' : undefined}
+                    onClick={() => setTab(name)}
+                    key={name}
+                  >
+                    <Icon />
+                    {name}
+                    {count > 0 && (
+                      <span className={`admin-nav-badge ${isUrgent ? 'is-urgent' : ''}`} aria-label={`${count} need attention`}>
+                        {count > 99 ? '99+' : count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+          </div>
+        ))}
+
+        <button type="button" className="admin-signout" onClick={handleLogout}>
           <LogOut />
           Sign out
         </button>
       </aside>
 
+      {open && <button type="button" className="admin-scrim" aria-label="Close navigation" onClick={() => setOpen(false)} />}
+
       <main>
-        <header>
+        <header className="admin-topbar">
           <button
             type="button"
             className="menu"
-            onClick={() => {
-              setOpen(
-                (current) =>
-                  !current
-              );
-            }}
+            onClick={() => setOpen((current) => !current)}
             aria-label="Toggle dashboard navigation"
+            aria-expanded={open}
           >
-            <Menu />
+            {open ? <X /> : <Menu />}
           </button>
 
-          <div>
-            <p className="eyebrow">
-              HIGH STREET OPERATIONS
-            </p>
-
-            <h1>{tab}</h1>
-
+          <div className="admin-topbar__title">
+            <p className="eyebrow">HIGH STREET OPERATIONS · {tab.group.toUpperCase()}</p>
+            <h1>{tab.name}</h1>
             <p className="dashboard-user">
-              Signed in as{' '}
-              {user?.name}{' '}
-
-              <span>
-                {user?.role}
-              </span>
+              Signed in as <strong>{user?.name}</strong> <span className="role-chip">{user?.role}</span>
             </p>
           </div>
 
-          <span className="online">
-            ● System online
-          </span>
+          <div className="admin-topbar__status">
+            <div className="attention-chips" aria-label="Needs attention">
+              {ATTENTION.filter(([key, , , target]) => can(target) && (attention[key] || 0) > 0).map(
+                ([key, singular, plural, target, Icon]) => (
+                  <button
+                    type="button"
+                    key={key}
+                    className={`attention-chip ${key === 'failedEmails' || (key === 'openComplaints' && attention.urgentComplaints) ? 'is-urgent' : ''}`}
+                    onClick={() => setTab(target)}
+                  >
+                    <Icon aria-hidden="true" />
+                    {attention[key]} {attention[key] === 1 ? singular : plural}
+                  </button>
+                )
+              )}
+              {summary && !ATTENTION.some(([key, , , target]) => can(target) && (attention[key] || 0) > 0) && (
+                <span className="attention-chip is-clear">Nothing waiting — all caught up</span>
+              )}
+            </div>
+            <span className={online ? 'online' : 'online is-offline'} role="status">
+              ● {online ? 'System online' : 'API unreachable'}
+            </span>
+          </div>
         </header>
 
         <section className="admin-panel">
-          {tab === 'Vehicles' && (
-            <VehicleManager />
-          )}
-
-          {tab === 'Images' && (
-            <VehicleImageManager />
-          )}
-
-          {tab === 'Enquiries' && (
-            <EnquiryManager />
-          )}
-
-          {tab === 'Bookings' && (
-            <BookingManager />
-          )}
-
-          {tab === 'Users' && (
-            <UserManager />
-          )}
-
-          {tab ===
-            'Permissions' && (
-            <StaffPermissionManager />
-          )}
-
-          {tab === 'Sessions' && (
-            <SessionManager />
-          )}
-
-          {tab === 'Content' && (
-            <ContentManager />
-          )}
-
-          {tab === 'Financing' && (
-            <FinanceManager />
-          )}
-
-          {!customTabs.includes(
-            tab
-          ) && (
-            <>
-              <div className="admin-head">
-                <h2>
-                  {editing
-                    ? 'Edit record'
-                    : 'Records'}
-                </h2>
-
-                {busy && (
-                  <span>
-                    Loading…
-                  </span>
-                )}
-              </div>
-
-              {Object.keys(
-                config.fields
-              ).length > 0 && (
-                <form
-                  className="admin-form"
-                  onSubmit={save}
-                >
-                  {Object.entries(
-                    config.fields
-                  ).map(
-                    ([
-                      fieldName,
-                      defaultValue
-                    ]) => (
-                      <ResourceField
-                        key={
-                          fieldName
-                        }
-                        fieldName={
-                          fieldName
-                        }
-                        defaultValue={
-                          defaultValue
-                        }
-                        value={
-                          form[
-                            fieldName
-                          ]
-                        }
-                        onChange={(
-                          value
-                        ) => {
-                          setForm({
-                            ...form,
-
-                            [fieldName]:
-                              value
-                          });
-                        }}
-                      />
-                    )
-                  )}
-
-                  <button
-                    className="button"
-                    type="submit"
-                  >
-                    {editing
-                      ? 'Update'
-                      : 'Create'}
-                  </button>
-
-                  {editing && (
-                    <button
-                      type="button"
-                      className="clear"
-                      onClick={() => {
-                        setEditing(
-                          null
-                        );
-
-                        setForm(
-                          config.fields
-                        );
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </form>
-              )}
-
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-
-                      <th>
-                        Summary
-                      </th>
-
-                      <th>
-                        Status
-                      </th>
-
-                      <th>
-                        Updated
-                      </th>
-
-                      <th>
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {rows.map(
-                      (record) => (
-                        <tr
-                          key={
-                            recordId(
-                              tab,
-                              record
-                            ) ||
-                            JSON.stringify(
-                              record
-                            )
-                          }
-                        >
-                          <td>
-                            #
-                            {recordId(
-                              tab,
-                              record
-                            )}
-                          </td>
-
-                          <td>
-                            <strong>
-                              {record.name ||
-                                'Record'}
-                            </strong>
-                          </td>
-
-                          <td>
-                            {record.isActive
-                              ? 'Active'
-                              : 'Inactive'}
-                          </td>
-
-                          <td>
-                            {record.updatedAt
-                              ? new Date(
-                                  record.updatedAt
-                                ).toLocaleDateString()
-                              : '—'}
-                          </td>
-
-                          <td>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                edit(
-                                  record
-                                );
-                              }}
-                            >
-                              Edit
-                            </button>
-
-                            <button
-                              type="button"
-                              className="danger"
-                              onClick={() => {
-                                remove(
-                                  record
-                                );
-                              }}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    )}
-
-                    {!busy &&
-                      rows.length ===
-                        0 && (
-                        <tr>
-                          <td colSpan="5">
-                            No records
-                            yet.
-                          </td>
-                        </tr>
-                      )}
-                  </tbody>
-                </table>
-              </div>
-            </>
+          {tab.name === 'Overview' ? (
+            <OverviewDashboard
+              summary={summary}
+              loading={summaryLoading}
+              error={summaryError}
+              onRefresh={() => loadSummary()}
+              onNavigate={setTab}
+              can={can}
+            />
+          ) : (
+            ActiveComponent && <ActiveComponent />
           )}
         </section>
       </main>
     </div>
-  );
-}
-
-function ResourceField({
-  fieldName,
-  defaultValue,
-  value,
-  onChange
-}) {
-  const isBoolean =
-    typeof defaultValue ===
-    'boolean';
-
-  if (isBoolean) {
-    return (
-      <label>
-        {fieldName}
-
-        <input
-          type="checkbox"
-          checked={
-            Boolean(value)
-          }
-          onChange={(event) => {
-            onChange(
-              event.target.checked
-            );
-          }}
-        />
-      </label>
-    );
-  }
-
-  return (
-    <label>
-      {fieldName}
-
-      <input
-        required
-        type={
-          typeof defaultValue ===
-          'number'
-            ? 'number'
-            : 'text'
-        }
-        value={value ?? ''}
-        onChange={(event) => {
-          onChange(
-            typeof defaultValue ===
-            'number'
-              ? Number(
-                  event.target.value
-                )
-              : event.target.value
-          );
-        }}
-      />
-    </label>
   );
 }

@@ -1,22 +1,69 @@
+/*
+|--------------------------------------------------------------------------
+| VIVA-HEADER – H.F. Naaziq – Customer Enquiry
+| CRUD resource 1: Enquiries (table `enquiries`)
+|--------------------------------------------------------------------------
+|   CREATE  createEnquiry        POST /api/v1/enquiries
+|   READ    listMyEnquiries      GET /api/v1/my/enquiries
+|   READ    getMyEnquiry         GET /api/v1/my/enquiries/:id
+|   READ    listEnquiries        GET /api/v1/enquiries
+|   READ    getEnquiry           GET /api/v1/enquiries/:id
+|   READ    listEnquiryInbound   GET /api/v1/enquiries/:id/inbound
+|   UPDATE  updateEnquiry        PATCH /api/v1/enquiries/:id
+|   UPDATE  assignEnquiry        PATCH /api/v1/enquiries/:id/assign
+|   DELETE  deleteEnquiry        DELETE /api/v1/enquiries/:id
+| Every write goes through Sequelize to MySQL/MariaDB and is recorded in
+| activity_logs (services/activity.service.js) where it changes data.
+*/
+
 import {
   Op
 } from 'sequelize';
 
 import {
   Enquiry,
+  Response,
   StaffPermission,
   User,
   Vehicle,
   sequelize
 } from '../models/index.js';
 
+/*
+ * VIVA – Naaziq – Enquiry Responses: customer READ.
+ * Customers see only responses that were actually SENT (never drafts),
+ * without internal fields.
+ */
+const sentResponsesInclude = {
+  model: Response,
+  as: 'responses',
+  where: { status: 'Sent' },
+  required: false,
+  attributes: ['responseId', 'subject', 'responseBody', 'sentAt']
+};
+
 import {
   ok
 } from '../middleware/core.js';
 
 import {
-  sendMail
+  enquiryTag,
+  getAdminRecipient,
+  queueMail,
+  withTag
 } from '../services/mail.service.js';
+
+import {
+  logActivity
+} from '../services/activity.service.js';
+
+import {
+  InboundEmail
+} from '../models/index.js';
+
+function escapeLike(value) {
+  return String(value).replace(/[\\%_]/g, (character) => `\\${character}`);
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -162,6 +209,7 @@ const verifyStaffAccess = (
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD CREATE – customer submits; admin + customer emails queued (POST /api/v1/enquiries)
 export async function createEnquiry(
   req,
   res
@@ -230,18 +278,27 @@ export async function createEnquiry(
     status: 'New'
   });
 
-  if (
-    process.env.ADMIN_NOTIFICATION_EMAIL
-  ) {
-    await sendMail({
-      to:
-        process.env.ADMIN_NOTIFICATION_EMAIL,
+  await logActivity(
+    req,
+    'enquiry.created',
+    'Enquiry',
+    enquiry.enquiryId,
+    `Enquiry #${enquiry.enquiryId} received for ${enquiry.vehicleReference}`
+  );
 
-      subject:
-        `New enquiry: ${enquiry.vehicleReference}`,
+  const adminRecipient = getAdminRecipient();
 
-      text:
-        [
+  if (adminRecipient) {
+    await queueMail(
+      {
+        to: adminRecipient,
+        replyTo: enquiry.customerEmail,
+        subject: withTag(
+          `New enquiry: ${enquiry.vehicleReference}`,
+          enquiryTag(enquiry.enquiryId)
+        ),
+        heading: 'New customer enquiry',
+        text: [
           `Customer: ${enquiry.customerName}`,
           `Email: ${enquiry.customerEmail}`,
           `Phone: ${enquiry.customerPhone}`,
@@ -249,16 +306,50 @@ export async function createEnquiry(
           '',
           enquiry.message
         ].join('\n')
-    });
+      },
+      {
+        messageKey: `enquiry-${enquiry.enquiryId}-admin`,
+        template: 'enquiry-admin',
+        relatedType: 'Enquiry',
+        relatedId: enquiry.enquiryId,
+        createdBy: customer.userId
+      }
+    );
   }
+
+  const acknowledgement = await queueMail(
+    {
+      to: enquiry.customerEmail,
+      subject: withTag(
+        `We received your enquiry about ${enquiry.vehicleReference}`,
+        enquiryTag(enquiry.enquiryId)
+      ),
+      heading: 'Thank you for your enquiry',
+      text: [
+        `Dear ${enquiry.customerName},`,
+        `Thank you for contacting High Street about ${enquiry.vehicleReference}. Your enquiry reference is #${enquiry.enquiryId}.`,
+        `Your message:\n${enquiry.message}`,
+        'A member of our team will reply shortly. You can follow the progress from "My enquiries" in your account.',
+        'High Street (PVT) Ltd.'
+      ].join('\n\n')
+    },
+    {
+      messageKey: `enquiry-${enquiry.enquiryId}-ack`,
+      template: 'enquiry-ack',
+      relatedType: 'Enquiry',
+      relatedId: enquiry.enquiryId,
+      createdBy: customer.userId
+    }
+  );
 
   return res.status(201).json({
     success: true,
     message:
       'Your enquiry has been submitted successfully',
-
     data: enquiry,
-    meta: {}
+    meta: {
+      emailStatus: acknowledgement?.status || null
+    }
   });
 }
 
@@ -268,6 +359,7 @@ export async function createEnquiry(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD READ – staff/admin list, search, filters (GET /api/v1/enquiries)
 export async function listEnquiries(
   req,
   res
@@ -288,6 +380,19 @@ export async function listEnquiries(
   if (req.user.role === 'Staff') {
     where.assignedTo =
       req.user.userId;
+  }
+
+  if (req.query.search) {
+    const raw = String(req.query.search).trim().slice(0, 100);
+    const term = `%${escapeLike(raw)}%`;
+
+    where[Op.or] = [
+      { customerName: { [Op.like]: term } },
+      { customerEmail: { [Op.like]: term } },
+      { vehicleReference: { [Op.like]: term } },
+      { message: { [Op.like]: term } },
+      ...(/^\d+$/.test(raw) ? [{ enquiryId: Number(raw) }] : [])
+    ];
   }
 
   const result =
@@ -323,6 +428,7 @@ export async function listEnquiries(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD READ – staff/admin details (GET /api/v1/enquiries/:id)
 export async function getEnquiry(
   req,
   res
@@ -349,6 +455,7 @@ export async function getEnquiry(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD READ – customer: own enquiries with SENT replies (GET /api/v1/my/enquiries)
 export async function listMyEnquiries(
   req,
   res
@@ -372,11 +479,14 @@ export async function listMyEnquiries(
             'status'
           ],
           required: false
-        }
+        },
+
+        sentResponsesInclude
       ],
 
       order: [
-        ['createdAt', 'DESC']
+        ['createdAt', 'DESC'],
+        [{ model: Response, as: 'responses' }, 'sentAt', 'ASC']
       ]
     });
 
@@ -387,6 +497,7 @@ export async function listMyEnquiries(
   );
 }
 
+// VIVA CRUD READ – customer: one enquiry (GET /api/v1/my/enquiries/:id)
 export async function getMyEnquiry(
   req,
   res
@@ -413,8 +524,12 @@ export async function getMyEnquiry(
             'status'
           ],
           required: false
-        }
-      ]
+        },
+
+        sentResponsesInclude
+      ],
+
+      order: [[{ model: Response, as: 'responses' }, 'sentAt', 'ASC']]
     });
 
   if (!enquiry) {
@@ -438,6 +553,7 @@ export async function getMyEnquiry(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD UPDATE – status New / In Progress / Responded / Archived (PATCH /api/v1/enquiries/:id)
 export async function updateEnquiry(
   req,
   res
@@ -469,6 +585,14 @@ export async function updateEnquiry(
 
   await enquiry.update(updateData);
 
+  await logActivity(
+    req,
+    'enquiry.status_changed',
+    'Enquiry',
+    enquiry.enquiryId,
+    `Enquiry #${enquiry.enquiryId} marked ${status}`
+  );
+
   return ok(
     res,
     'Enquiry status updated',
@@ -482,6 +606,7 @@ export async function updateEnquiry(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD UPDATE – assign to staff (PATCH /api/v1/enquiries/:id/assign)
 export async function assignEnquiry(
   req,
   res
@@ -553,6 +678,14 @@ export async function assignEnquiry(
     }
   );
 
+  await logActivity(
+    req,
+    'enquiry.assigned',
+    'Enquiry',
+    enquiry.enquiryId,
+    `Enquiry #${enquiry.enquiryId} assigned to ${staff.name}`
+  );
+
   const assignedEnquiry =
     await findEnquiry(
       enquiry.enquiryId
@@ -571,6 +704,7 @@ export async function assignEnquiry(
 |--------------------------------------------------------------------------
 */
 
+// VIVA CRUD DELETE – Admin permanently deletes (DELETE /api/v1/enquiries/:id)
 export async function deleteEnquiry(
   req,
   res
@@ -581,8 +715,55 @@ export async function deleteEnquiry(
 
   await enquiry.destroy();
 
+  await logActivity(
+    req,
+    'enquiry.deleted',
+    'Enquiry',
+    enquiry.enquiryId,
+    `Enquiry #${enquiry.enquiryId} permanently deleted`
+  );
+
   return ok(
     res,
     'Enquiry permanently deleted'
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Customer email replies received for an enquiry
+|--------------------------------------------------------------------------
+*/
+
+// VIVA CRUD READ – email replies received from the customer (GET /api/v1/enquiries/:id/inbound)
+export async function listEnquiryInbound(
+  req,
+  res
+) {
+  const enquiry = await findEnquiry(
+    req.params.id
+  );
+
+  verifyStaffAccess(
+    enquiry,
+    req.user
+  );
+
+  const replies =
+    await InboundEmail.findAll({
+      where: {
+        enquiryId:
+          enquiry.enquiryId,
+        status: 'Matched'
+      },
+      order: [
+        ['receivedAt', 'DESC']
+      ]
+    });
+
+  return ok(
+    res,
+    'Customer email replies retrieved',
+    replies
   );
 }
